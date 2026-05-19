@@ -1,0 +1,13 @@
+{
+  "name": "alert_router",
+  "version": "1.0.0",
+  "description": "Kafka → RabbitMQ interoperability bridge for enriched alerts",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "kafkajs": "^2.2.4",
+    "amqplib": "^0.10.3"
+  }
+}

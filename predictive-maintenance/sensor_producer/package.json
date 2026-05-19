@@ -1,0 +1,12 @@
+{
+  "name": "sensor_producer",
+  "version": "1.0.0",
+  "description": "Kafka producer — simulates 10 industrial vibration sensors",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "kafkajs": "^2.2.4"
+  }
+}

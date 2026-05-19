@@ -1,0 +1,12 @@
+{
+  "name": "actuator_worker",
+  "version": "1.0.0",
+  "description": "RabbitMQ consumer — executes critical shutdown commands on actuators",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "amqplib": "^0.10.3"
+  }
+}

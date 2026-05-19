@@ -1,0 +1,13 @@
+{
+  "name": "plant_monitor_backend",
+  "version": "1.0.0",
+  "description": "WebSocket server for real-time plant telemetry dashboard",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "kafkajs": "^2.2.4",
+    "ws": "^8.14.2"
+  }
+}

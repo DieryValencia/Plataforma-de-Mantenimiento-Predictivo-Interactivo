@@ -1,0 +1,13 @@
+{
+  "name": "operator_console_backend",
+  "version": "1.0.0",
+  "description": "WebSocket server for human operator decision console via RabbitMQ",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "amqplib": "^0.10.3",
+    "ws": "^8.14.2"
+  }
+}

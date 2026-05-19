@@ -1,0 +1,12 @@
+{
+  "name": "alert_detector",
+  "version": "1.0.0",
+  "description": "Stateful Kafka consumer — sliding window alert detection",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "kafkajs": "^2.2.4"
+  }
+}

@@ -1,0 +1,215 @@
+version: "3.9"
+
+services:
+  # ============================================================
+  # INFRAESTRUCTURA: Apache Kafka (KRaft - Sin Zookeeper)
+  # ============================================================
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka
+    hostname: kafka
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      # --- KRaft Mode Configuration ---
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,CONTROLLER://0.0.0.0:29093,EXTERNAL://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,EXTERNAL://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      # --- Topic Auto-Creation ---
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      # --- Cluster ID for KRaft ---
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+      # --- Log Configuration ---
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:29092 --list || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    networks:
+      - iot-network
+
+  # ============================================================
+  # INFRAESTRUCTURA: RabbitMQ con Plugin Delayed Message Exchange
+  # ============================================================
+  rabbitmq:
+    build:
+      context: ./rabbitmq
+      dockerfile: Dockerfile
+    container_name: rabbitmq
+    hostname: rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: admin123
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    networks:
+      - iot-network
+
+  # ============================================================
+  # MICROSERVICIO 1: Productor de Telemetría (Kafka)
+  # ============================================================
+  sensor_producer:
+    build:
+      context: ./sensor_producer
+      dockerfile: Dockerfile
+    container_name: sensor_producer
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKER: kafka:29092
+    restart: on-failure
+    networks:
+      - iot-network
+
+  # ============================================================
+  # MICROSERVICIO 2: Detector de Alertas (Kafka Stateful Consumer)
+  # ============================================================
+  alert_detector:
+    build:
+      context: ./alert_detector
+      dockerfile: Dockerfile
+    container_name: alert_detector
+    depends_on:
+      kafka:
+        condition: service_healthy
+      sensor_producer:
+        condition: service_started
+    environment:
+      KAFKA_BROKER: kafka:29092
+    restart: on-failure
+    networks:
+      - iot-network
+
+  # ============================================================
+  # MICROSERVICIO 3: Enrutador de Alertas (Kafka → RabbitMQ Bridge)
+  # ============================================================
+  alert_router:
+    build:
+      context: ./alert_router
+      dockerfile: Dockerfile
+    container_name: alert_router
+    depends_on:
+      kafka:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKER: kafka:29092
+      RABBITMQ_URL: amqp://admin:admin123@rabbitmq:5672
+    restart: on-failure
+    networks:
+      - iot-network
+
+  # ============================================================
+  # MICROSERVICIO 4: Backend Monitor de Planta (WebSocket :8081)
+  # ============================================================
+  plant_monitor_backend:
+    build:
+      context: ./plant_monitor_backend
+      dockerfile: Dockerfile
+    container_name: plant_monitor_backend
+    ports:
+      - "8081:8081"
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKER: kafka:29092
+    restart: on-failure
+    networks:
+      - iot-network
+
+  # ============================================================
+  # MICROSERVICIO 5: Consola del Operador (WebSocket :8082)
+  # ============================================================
+  operator_console_backend:
+    build:
+      context: ./operator_console_backend
+      dockerfile: Dockerfile
+    container_name: operator_console_backend
+    ports:
+      - "8082:8082"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_URL: amqp://admin:admin123@rabbitmq:5672
+    restart: on-failure
+    networks:
+      - iot-network
+
+  # ============================================================
+  # MICROSERVICIO 6: Despachador de Acciones (REST :3000)
+  # ============================================================
+  action_dispatcher:
+    build:
+      context: ./action_dispatcher
+      dockerfile: Dockerfile
+    container_name: action_dispatcher
+    ports:
+      - "3001:3000"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_URL: amqp://admin:admin123@rabbitmq:5672
+    restart: on-failure
+    networks:
+      - iot-network
+
+  # ============================================================
+  # MICROSERVICIO 7: Worker de Actuador (Acciones Críticas)
+  # ============================================================
+  actuator_worker:
+    build:
+      context: ./actuator_worker
+      dockerfile: Dockerfile
+    container_name: actuator_worker
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_URL: amqp://admin:admin123@rabbitmq:5672
+    restart: on-failure
+    networks:
+      - iot-network
+
+  # ============================================================
+  # MICROSERVICIO 8: Worker de Mantenimiento (Órdenes Diferidas)
+  # ============================================================
+  maintenance_worker:
+    build:
+      context: ./maintenance_worker
+      dockerfile: Dockerfile
+    container_name: maintenance_worker
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_URL: amqp://admin:admin123@rabbitmq:5672
+    restart: on-failure
+    networks:
+      - iot-network
+
+networks:
+  iot-network:
+    driver: bridge
