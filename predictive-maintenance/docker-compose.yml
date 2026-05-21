@@ -207,6 +207,35 @@ services:
       - iot-network
 
   # ============================================================
+  # MICROSERVICIO 9: Notificaciones móviles (Telegram + Web /m)
+  # ============================================================
+  notification_service:
+    build:
+      context: ./notification_service
+      dockerfile: Dockerfile
+    container_name: notification_service
+    ports:
+      - "3003:3003"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      action_dispatcher:
+        condition: service_started
+    environment:
+      RABBITMQ_URL: amqp://admin:admin123@rabbitmq:5672
+      DECIDE_URL: http://action_dispatcher:3000/decide
+      PUBLIC_BASE_URL: http://localhost:3003
+      HTTP_PORT: "3003"
+      NOTIFY_CRITICAL_ONLY: "true"
+      NOTIFY_WARNINGS: "false"
+    env_file:
+      - path: ./notification_service/.env
+        required: false
+    restart: on-failure
+    networks:
+      - iot-network
+
+  # ============================================================
   # MICROSERVICIO 8: Worker de Mantenimiento (Órdenes Diferidas)
   # ============================================================
   maintenance_worker:

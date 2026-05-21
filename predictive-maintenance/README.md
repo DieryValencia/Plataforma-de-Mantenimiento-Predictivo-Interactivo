@@ -28,8 +28,12 @@ graph TD
         AR -->|Interoperabilidad| RX_HA{Exchange Fanout: human_alerts}
         
         RX_HA --> OC[operator_console_backend :8082]
+        RX_HA --> NS[notification_service :3003]
         
-        DASH[dashboard.html] -->|fetch POST /decide| DISP[action_dispatcher :3001]
+        NS -->|Telegram / ntfy| PHONE[📱 Operador móvil]
+        NS -->|POST /decide| DISP[action_dispatcher :3001]
+        DASH[dashboard.html] -->|fetch POST /decide| DISP
+        PHONE -->|Web /m| NS
         
         DISP -->|actions_direct [critical]| AW[actuator_worker]
         DISP -->|actions_direct [maintenance]| MW[maintenance_worker]
@@ -86,6 +90,12 @@ predictive-maintenance/
 │   ├── package.json
 │   ├── Dockerfile
 │   └── index.js                # Worker para tareas de mantenimiento inmediato/diferido
+├── notification_service/
+│   ├── package.json
+│   ├── Dockerfile
+│   ├── .env.example            # Telegram / ntfy (copiar a .env)
+│   ├── index.js                # Push móvil + API decisiones
+│   └── public/mobile.html      # Panel táctil para celular
 └── dashboard/
     └── dashboard.html          # Interfaz web de operaciones con Tailwind CSS
 ```
@@ -104,6 +114,61 @@ predictive-maintenance/
 | **8082** | `operator_console_backend`| WebSocket Server - Despacho de Decisiones al Operador |
 | **3001** | `action_dispatcher` | HTTP POST - Envío de Decisiones (Remapeado para evitar conflictos con Grafana local) |
 | **3002** | `sensor_producer` | HTTP POST /control - Impacto de decisiones en simulación |
+| **3003** | `notification_service` | Telegram / ntfy + panel móvil `/m` |
+
+---
+
+## 📱 Notificaciones al celular del operador
+
+El microservicio `notification_service` consume el mismo Fanout `human_alerts` y envía alertas **críticas** al móvil con botones para decidir.
+
+### Opción A — Telegram (recomendada)
+
+1. En Telegram, abre [@BotFather](https://t.me/BotFather) → `/newbot` → copia el **token**.
+2. Envía `/start` a tu bot y obtén el **chat_id**:
+   ```bash
+   curl "https://api.telegram.org/bot<TU_TOKEN>/getUpdates"
+   ```
+   Busca `"chat":{"id":123456789}`.
+3. Copia la plantilla de variables:
+   ```bash
+   cp notification_service/.env.example notification_service/.env
+   ```
+4. Edita `notification_service/.env`:
+   ```env
+   TELEGRAM_BOT_TOKEN=123456:ABC...
+   TELEGRAM_CHAT_ID=123456789
+   ```
+5. En `docker-compose.yml`, en el servicio `notification_service`, referencia el archivo (o pega las variables en `environment`):
+   ```yaml
+   env_file:
+     - ./notification_service/.env
+   ```
+6. Reinicia: `docker compose up --build -d notification_service`
+
+Recibirás un mensaje con botones (**Apagar**, **Ignorar 10m**, etc.). Al pulsar, se ejecuta `POST /decide` y el sensor en la simulación cambia de estado.
+
+### Opción B — Panel web en el celular
+
+Abre en el navegador del teléfono (misma red Wi‑Fi):
+
+**http://localhost:3003/m**
+
+Lista alertas pendientes con botones grandes. También llega como enlace desde Telegram o ntfy.
+
+### Opción C — ntfy (push simple)
+
+1. Instala la app [ntfy](https://ntfy.sh) en el celular.
+2. Suscríbete a un topic (ej. `planta-iot-operador-david`).
+3. En `.env`: `NTFY_TOPIC=planta-iot-operador-david`
+4. La notificación abre el panel `/m` al tocar.
+
+### Verificar
+
+```bash
+docker logs -f notification_service
+curl http://localhost:3003/health
+```
 
 ---
 
@@ -124,7 +189,7 @@ predictive-maintenance/
    ```bash
    docker compose ps
    ```
-   Deberías ver los 10 contenedores en estado `Up` y `healthy`.
+   Deberías ver los 11 contenedores en estado `Up` y `healthy`.
 
 3. **Ejecutar la Interfaz Web**:
    Abre el archivo `dashboard/dashboard.html` directamente en tu navegador preferido. Puedes abrirlo con doble clic en tu explorador de archivos o con el siguiente comando en Windows PowerShell/Command Prompt:

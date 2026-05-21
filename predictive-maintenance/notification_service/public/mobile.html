@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#0f172a">
+  <title>Operador IoT — Decisiones</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
+    body { background: #0f172a; color: #e2e8f0; min-height: 100dvh; padding: 12px; padding-bottom: 80px; }
+    header { text-align: center; padding: 16px 0 20px; border-bottom: 1px solid #334155; margin-bottom: 16px; }
+    h1 { font-size: 1.1rem; font-weight: 700; color: #22d3ee; }
+    .sub { font-size: 0.75rem; color: #64748b; margin-top: 4px; }
+    .status { display: flex; justify-content: center; gap: 8px; margin-top: 10px; font-size: 0.7rem; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; animation: pulse 1.5s infinite; }
+    @keyframes pulse { 50% { opacity: 0.4; } }
+    .empty { text-align: center; padding: 48px 20px; color: #64748b; }
+    .card { background: #1e293b; border-radius: 16px; padding: 16px; margin-bottom: 12px; border: 1px solid #334155; }
+    .card.critical { border-color: #ef4444; box-shadow: 0 0 20px rgba(239,68,68,0.15); }
+    .card.warning { border-color: #eab308; }
+    .badge { display: inline-block; font-size: 0.65rem; font-weight: 800; padding: 4px 10px; border-radius: 20px; margin-bottom: 8px; }
+    .badge.critical { background: #7f1d1d; color: #fca5a5; }
+    .badge.warning { background: #713f12; color: #fde047; }
+    .sensor { font-size: 1.25rem; font-weight: 800; }
+    .meta { font-size: 0.75rem; color: #94a3b8; margin: 8px 0 12px; line-height: 1.4; }
+    .id { font-size: 0.65rem; font-family: monospace; color: #475569; word-break: break-all; }
+    .actions { display: flex; flex-direction: column; gap: 8px; }
+    .btn { border: none; border-radius: 12px; padding: 14px 16px; font-size: 0.9rem; font-weight: 700; color: #fff; cursor: pointer; transition: transform 0.1s, opacity 0.2s; touch-action: manipulation; }
+    .btn:active { transform: scale(0.98); }
+    .btn:disabled { opacity: 0.5; pointer-events: none; }
+    .btn-off { background: linear-gradient(135deg, #dc2626, #991b1b); }
+    .btn-ign { background: linear-gradient(135deg, #475569, #334155); }
+    .btn-pgm { background: linear-gradient(135deg, #2563eb, #1d4ed8); }
+    .btn-wait { background: linear-gradient(135deg, #d97706, #b45309); }
+    .toast { position: fixed; bottom: 20px; left: 12px; right: 12px; padding: 14px; border-radius: 12px; font-size: 0.85rem; font-weight: 600; text-align: center; z-index: 100; display: none; }
+    .toast.ok { background: #14532d; color: #86efac; display: block; }
+    .toast.err { background: #7f1d1d; color: #fca5a5; display: block; }
+    .refresh { position: fixed; bottom: 0; left: 0; right: 0; padding: 12px; background: #0f172aee; border-top: 1px solid #334155; text-align: center; font-size: 0.7rem; color: #64748b; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>🛡️ Consola Móvil Operador</h1>
+    <p class="sub">Decisiones en tiempo real · Mantenimiento Predictivo</p>
+    <div class="status"><span class="dot"></span><span id="conn">Conectando…</span></div>
+  </header>
+
+  <div id="list"></div>
+  <div id="toast" class="toast"></div>
+  <div class="refresh">Actualización automática cada 3s</div>
+
+<script>
+const API = window.location.origin;
+const DECIDE_API = API + "/api/decide";
+const ALERTS_API = API + "/api/alerts/pending";
+const params = new URLSearchParams(location.search);
+const focusAlert = params.get("alert");
+
+const BTN_CLASS = {
+  APAGADO_INMEDIATO: "btn-off",
+  IGNORAR_10_MINUTOS: "btn-ign",
+  PROGRAMAR_MANTENIMIENTO_AHORA: "btn-pgm",
+  RECONOCER_Y_ESPERAR_24H: "btn-wait",
+};
+
+function label(action) {
+  return action.replace(/_/g, " ");
+}
+
+function showToast(msg, ok) {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.className = "toast " + (ok ? "ok" : "err");
+  setTimeout(() => { t.className = "toast"; }, 4000);
+}
+
+async function decide(alert, action, btn) {
+  btn.disabled = true;
+  try {
+    const res = await fetch(DECIDE_API, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        alert_id: alert.alert_id,
+        sensor_id: alert.sensor_id,
+        type: alert.type,
+        chosen_action: action,
+      }),
+    });
+    const data = await res.json();
+    if (data.status === "ACK") {
+      showToast(`✅ ${label(action)} — Sensor ${alert.sensor_id}`, true);
+      loadAlerts();
+    } else {
+      showToast(data.error || "Error", false);
+      btn.disabled = false;
+    }
+  } catch (e) {
+    showToast("Error de red: " + e.message, false);
+    btn.disabled = false;
+  }
+}
+
+function renderCard(alert) {
+  const isCrit = alert.type === "CRITICAL";
+  const div = document.createElement("div");
+  div.className = "card " + (isCrit ? "critical" : "warning");
+  div.id = "card-" + alert.alert_id;
+  const btns = (alert.options || []).map(opt => {
+    const cls = BTN_CLASS[opt] || "btn-ign";
+    return `<button class="btn ${cls}" data-action="${opt}">${label(opt)}</button>`;
+  }).join("");
+  div.innerHTML = `
+    <span class="badge ${isCrit ? "critical" : "warning"}">${isCrit ? "🔴 CRÍTICO" : "🟡 ADVERTENCIA"}</span>
+    <p class="sensor">Sensor ${alert.sensor_id}</p>
+    <p class="meta">${alert.message || "Se requiere su decisión"}${alert.vibration != null ? "<br>Vibración: " + alert.vibration + " mm/s" : ""}</p>
+    <p class="id">${alert.alert_id}</p>
+    <div class="actions">${btns}</div>`;
+  div.querySelectorAll("button").forEach(btn => {
+    btn.addEventListener("click", () => decide(alert, btn.dataset.action, btn));
+  });
+  return div;
+}
+
+async function loadAlerts() {
+  const list = document.getElementById("list");
+  try {
+    const res = await fetch(ALERTS_API);
+    const data = await res.json();
+    document.getElementById("conn").textContent = data.alerts.length
+      ? `${data.alerts.length} alerta(s) pendiente(s)`
+      : "Sin alertas pendientes";
+    list.innerHTML = "";
+    if (!data.alerts.length) {
+      list.innerHTML = '<div class="empty"><p>✓</p><p style="margin-top:12px">No hay decisiones pendientes</p></div>';
+      return;
+    }
+    let alerts = data.alerts;
+    if (focusAlert) {
+      alerts = alerts.filter(a => a.alert_id === focusAlert).concat(
+        alerts.filter(a => a.alert_id !== focusAlert)
+      );
+    }
+    alerts.forEach(a => list.appendChild(renderCard(a)));
+    if (focusAlert) {
+      const el = document.getElementById("card-" + focusAlert);
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  } catch (e) {
+    document.getElementById("conn").textContent = "Error de conexión";
+    list.innerHTML = `<div class="empty">No se pudo conectar al servicio (${e.message})</div>`;
+  }
+}
+
+loadAlerts();
+setInterval(loadAlerts, 3000);
+</script>
+</body>
+</html>
