@@ -142,13 +142,16 @@
       </section>
 
       <!-- Activity + filters -->
-      <section class="xl:col-span-5 panel rounded-2xl p-5 flex flex-col min-h-[420px]">
+      <section class="xl:col-span-5 panel rounded-2xl p-5 flex flex-col">
         <div class="flex items-center justify-between mb-3">
           <h2 class="text-base font-bold text-white flex items-center gap-2">
             <span class="w-8 h-8 rounded-lg bg-violet-500/15 flex items-center justify-center text-violet-400">📜</span>
             Registro de eventos
           </h2>
-          <button onclick="clearActivityLog()" class="text-[10px] text-slate-500 hover:text-slate-300 px-2 py-1 rounded border border-slate-700/50">Limpiar</button>
+          <div class="flex items-center gap-2">
+            <span id="log-count" class="text-[10px] mono px-2 py-0.5 rounded bg-slate-800/80 text-slate-400 border border-slate-700/50">0 / 20</span>
+            <button onclick="clearActivityLog()" class="text-[10px] text-slate-500 hover:text-slate-300 px-2 py-1 rounded border border-slate-700/50">Limpiar</button>
+          </div>
         </div>
         <div class="flex flex-wrap gap-1.5 mb-3" id="log-filters">
           <button data-filter="all" class="filter-chip active text-[10px] px-2.5 py-1 rounded-full border border-slate-600/50 text-slate-400">Todos</button>
@@ -156,7 +159,10 @@
           <button data-filter="warn" class="filter-chip text-[10px] px-2.5 py-1 rounded-full border border-slate-600/50 text-slate-400">Alertas</button>
           <button data-filter="ok" class="filter-chip text-[10px] px-2.5 py-1 rounded-full border border-slate-600/50 text-slate-400">Decisiones</button>
         </div>
-        <div id="activity-log" class="flex-1 overflow-y-auto space-y-1.5 pr-1"></div>
+        <div id="activity-log-scroll" class="h-[300px] overflow-y-auto overflow-x-hidden rounded-xl border border-slate-700/40 bg-slate-950/40 scroll-smooth">
+          <div id="activity-log" class="space-y-1.5 p-2 min-h-full"></div>
+        </div>
+        <p class="text-[9px] text-slate-600 mt-2 text-center">Máximo 20 registros · desplázate para ver anteriores</p>
       </section>
     </div>
 
@@ -167,9 +173,14 @@
           <span class="w-8 h-8 rounded-lg bg-amber-500/15 flex items-center justify-center text-amber-400">🛡️</span>
           Acciones requeridas — Operador humano
         </h2>
-        <span class="text-[10px] px-2 py-1 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20">Flujo: Kafka → RabbitMQ → WS :8082</span>
+        <div class="flex items-center gap-2">
+          <span id="alert-queue-badge" class="hidden text-[10px] px-2 py-1 rounded bg-violet-500/15 text-violet-300 border border-violet-500/30 animate-pulse">
+            En cola: <span id="alert-queue-count" class="font-bold">0</span>
+          </span>
+          <span class="text-[10px] px-2 py-1 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20">Flujo: Kafka → RabbitMQ → WS :8082</span>
+        </div>
       </div>
-      <div id="alerts-panel" class="space-y-3">
+      <div id="alerts-panel" class="space-y-3 max-h-[520px] overflow-y-auto overflow-x-hidden pr-1 scroll-smooth">
         <div id="no-alerts-msg" class="flex flex-col items-center justify-center py-12 text-center">
           <div class="w-14 h-14 rounded-full bg-green-500/10 flex items-center justify-center text-2xl mb-3">✓</div>
           <p class="text-slate-400 text-sm font-medium">Sin alertas pendientes</p>
@@ -221,10 +232,16 @@ const DECIDE_URL   = "http://localhost:3001/decide";
 const sensorState = new Map();
 const pendingAlerts = new Map();
 const activityEntries = [];
+const alertQueue = [];
 let alertCounter = 0;
 let decisionCount = 0;
 let logFilter = "all";
 let seqId = 0;
+let alertQueueDrainTimer = null;
+let isAlertQueueDraining = false;
+
+const MAX_LOG_ENTRIES = 20;
+const ALERT_QUEUE_DELAY_MS = 3500; // intervalo entre notificaciones visibles
 
 const STAGE_STYLES = {
   TELEMETRÍA: "bg-cyan-500/15 text-cyan-300 border-cyan-500/30",
@@ -332,19 +349,27 @@ function renderSensorCard(sensor) {
     <p class="text-[9px] text-slate-600 mt-2 mono">↻ ${ts}</p>`;
 }
 
-// ── Activity log estructurado ──────────────────────────────
+// ── Activity log estructurado (máx. 20, scroll) ────────────
 function addLog(msg, type, meta = {}) {
   const entry = { id: ++seqId, msg, type, time: nowTime(), full: nowFull(), ...meta };
   activityEntries.unshift(entry);
-  if (activityEntries.length > 100) activityEntries.pop();
+  while (activityEntries.length > MAX_LOG_ENTRIES) activityEntries.pop();
   renderActivityLog();
+}
+
+function updateLogCount(shown) {
+  document.getElementById("log-count").textContent = `${shown} / ${MAX_LOG_ENTRIES}`;
 }
 
 function renderActivityLog() {
   const log = document.getElementById("activity-log");
+  const scrollWrap = document.getElementById("activity-log-scroll");
   log.innerHTML = "";
   const filtered = activityEntries.filter(e => logFilter === "all" || e.type === logFilter);
-  if (!filtered.length) {
+  const visible = filtered.slice(0, MAX_LOG_ENTRIES);
+  updateLogCount(visible.length);
+
+  if (!visible.length) {
     log.innerHTML = '<p class="text-slate-600 text-xs text-center py-8">Sin eventos para este filtro</p>';
     return;
   }
@@ -354,7 +379,7 @@ function renderActivityLog() {
     crit: { border: "border-l-red-500/60", bg: "bg-red-950/20", icon: "🔴", label: "CRT" },
     ok: { border: "border-l-green-500/60", bg: "bg-green-950/20", icon: "✅", label: "ACK" },
   };
-  filtered.forEach(e => {
+  visible.forEach(e => {
     const st = typeStyles[e.type] || typeStyles.info;
     const el = document.createElement("div");
     el.className = `slide-in flex gap-2 px-2.5 py-2 rounded-lg border-l-2 ${st.border} ${st.bg}`;
@@ -371,6 +396,7 @@ function renderActivityLog() {
       </div>`;
     log.appendChild(el);
   });
+  scrollWrap.scrollTop = 0;
 }
 
 function clearActivityLog() {
@@ -385,6 +411,70 @@ document.getElementById("log-filters").addEventListener("click", (ev) => {
   document.querySelectorAll(".filter-chip").forEach(b => b.classList.toggle("active", b === btn));
   renderActivityLog();
 });
+
+// ── Cola de alertas con delay (operador humano) ────────────
+function isAlertDuplicate(alertId) {
+  if (!alertId) return false;
+  for (const a of pendingAlerts.values()) {
+    if (a.alert_id === alertId) return true;
+  }
+  return alertQueue.some((a) => a.alert_id === alertId);
+}
+
+function updateAlertQueueBadge() {
+  const badge = document.getElementById("alert-queue-badge");
+  const countEl = document.getElementById("alert-queue-count");
+  const n = alertQueue.length;
+  if (n > 0) {
+    badge.classList.remove("hidden");
+    countEl.textContent = n;
+  } else {
+    badge.classList.add("hidden");
+  }
+}
+
+function enqueueHumanAlert(alertData) {
+  if (isAlertDuplicate(alertData.alert_id)) return;
+
+  alertQueue.push(alertData);
+  updateAlertQueueBadge();
+
+  if (!isAlertQueueDraining) {
+    isAlertQueueDraining = true;
+    drainAlertQueue();
+  }
+}
+
+function drainAlertQueue() {
+  if (alertQueueDrainTimer) {
+    clearTimeout(alertQueueDrainTimer);
+    alertQueueDrainTimer = null;
+  }
+
+  if (alertQueue.length === 0) {
+    isAlertQueueDraining = false;
+    updateAlertQueueBadge();
+    return;
+  }
+
+  const alert = alertQueue.shift();
+  updateAlertQueueBadge();
+
+  renderAlertCard(alert);
+  const t = alert.type || alert.alert_type;
+  addLog(`Decisión requerida [${t}]`, t === "CRITICAL" ? "crit" : "warn", {
+    sensor: sensorLabel(alert),
+    trace: `id=${shortId(alert.alert_id)} opciones=[${(alert.options || []).join(", ")}]`,
+  });
+  addAudit("OPERADOR", sensorLabel(alert), `${t} · ${shortId(alert.alert_id)}`);
+
+  if (alertQueue.length > 0) {
+    alertQueueDrainTimer = setTimeout(drainAlertQueue, ALERT_QUEUE_DELAY_MS);
+  } else {
+    isAlertQueueDraining = false;
+    updateAlertQueueBadge();
+  }
+}
 
 // ── Alert cards con trazabilidad ───────────────────────────
 function renderAlertCard(alert) {
@@ -458,6 +548,7 @@ function renderAlertCard(alert) {
     <div class="flex flex-wrap gap-2">${btns}</div>`;
 
   panel.prepend(card);
+  panel.scrollTop = 0;
   addAudit("RABBITMQ", sensorLabel(alert), shortId(alertId) + " → operador");
 }
 
@@ -625,13 +716,7 @@ function connectOperator() {
   ws.onmessage = (e) => {
     const msg = JSON.parse(e.data);
     if (msg.type === "HUMAN_ALERT") {
-      renderAlertCard(msg.data);
-      const t = msg.data.type || msg.data.alert_type;
-      addLog(`Decisión requerida [${t}]`, t === "CRITICAL" ? "crit" : "warn", {
-        sensor: sensorLabel(msg.data),
-        trace: `id=${shortId(msg.data.alert_id)} opciones=[${(msg.data.options||[]).join(", ")}]`,
-      });
-      addAudit("OPERADOR", sensorLabel(msg.data), `${t} · ${shortId(msg.data.alert_id)}`);
+      enqueueHumanAlert(msg.data);
     }
   };
   ws.onclose = () => {
@@ -648,6 +733,7 @@ document.getElementById("audit-trail").innerHTML =
 connectTelemetry();
 connectOperator();
 updatePendingCount();
+updateLogCount(0);
 </script>
 </body>
 </html>
