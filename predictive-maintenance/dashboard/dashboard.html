@@ -6,103 +6,282 @@
   <title>IoT Predictive Maintenance — Centro de Operaciones</title>
   <meta name="description" content="Dashboard de mantenimiento predictivo IoT con Kafka y RabbitMQ">
   <script src="https://cdn.tailwindcss.com"></script>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <style>
-    * { font-family: 'Inter', sans-serif; }
-    body { background: #0a0e1a; }
-    .glass { background: rgba(255,255,255,0.04); backdrop-filter: blur(16px); border: 1px solid rgba(255,255,255,0.08); }
-    .glow-green { box-shadow: 0 0 20px rgba(34,197,94,0.3); }
-    .glow-red { box-shadow: 0 0 20px rgba(239,68,68,0.4); }
-    .glow-yellow { box-shadow: 0 0 20px rgba(234,179,8,0.3); }
-    @keyframes pulse-border { 0%,100%{border-color:rgba(239,68,68,0.3)} 50%{border-color:rgba(239,68,68,0.9)} }
-    .pulse-critical { animation: pulse-border 1s infinite; }
-    @keyframes slideIn { from{opacity:0;transform:translateY(20px)} to{opacity:1;transform:translateY(0)} }
-    .slide-in { animation: slideIn 0.4s ease-out; }
-    @keyframes fadeOut { to{opacity:0;transform:scale(0.95)} }
-    .fade-out { animation: fadeOut 0.3s ease-in forwards; }
-    .sensor-bar { transition: width 0.5s ease, background-color 0.3s ease; }
-    ::-webkit-scrollbar { width: 6px; }
-    ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 3px; }
+    :root {
+      --bg: #070b14;
+      --panel: rgba(15, 23, 42, 0.72);
+      --border: rgba(148, 163, 184, 0.12);
+      --accent: #22d3ee;
+      --ok: #22c55e;
+      --warn: #eab308;
+      --crit: #ef4444;
+    }
+    * { font-family: 'Plus Jakarta Sans', system-ui, sans-serif; }
+    .mono { font-family: 'JetBrains Mono', monospace; }
+    body {
+      background: var(--bg);
+      background-image:
+        radial-gradient(ellipse 80% 50% at 50% -20%, rgba(34, 211, 238, 0.12), transparent),
+        linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
+      background-size: 100% 100%, 48px 48px, 48px 48px;
+    }
+    .panel {
+      background: var(--panel);
+      backdrop-filter: blur(20px);
+      border: 1px solid var(--border);
+      box-shadow: 0 4px 24px rgba(0,0,0,0.35);
+    }
+    .glow-green { box-shadow: 0 0 24px rgba(34,197,94,0.25), inset 0 1px 0 rgba(255,255,255,0.05); }
+    .glow-red { box-shadow: 0 0 28px rgba(239,68,68,0.35), inset 0 1px 0 rgba(255,255,255,0.05); }
+    .glow-yellow { box-shadow: 0 0 24px rgba(234,179,8,0.25), inset 0 1px 0 rgba(255,255,255,0.05); }
+    @keyframes pulse-border { 0%,100%{border-color:rgba(239,68,68,0.35)} 50%{border-color:rgba(239,68,68,0.95)} }
+    .pulse-critical { animation: pulse-border 1.2s ease-in-out infinite; }
+    @keyframes slideIn { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:translateY(0)} }
+    .slide-in { animation: slideIn 0.35s ease-out; }
+    @keyframes fadeOut { to{opacity:0;transform:scale(0.97)} }
+    .fade-out { animation: fadeOut 0.35s ease-in forwards; }
+    @keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+    .sensor-bar { transition: width 0.6s cubic-bezier(0.4,0,0.2,1), background-color 0.3s; }
+    .trace-step::before {
+      content: '';
+      position: absolute;
+      left: 11px;
+      top: 22px;
+      bottom: -8px;
+      width: 2px;
+      background: linear-gradient(to bottom, rgba(34,211,238,0.5), transparent);
+    }
+    .trace-step:last-child::before { display: none; }
+    .filter-chip.active { background: rgba(34, 211, 238, 0.2); border-color: rgba(34, 211, 238, 0.5); color: #67e8f9; }
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-thumb { background: rgba(148,163,184,0.25); border-radius: 4px; }
+    .stat-card { transition: transform 0.2s, border-color 0.2s; }
+    .stat-card:hover { transform: translateY(-2px); border-color: rgba(34,211,238,0.25); }
+    .copy-btn:active { transform: scale(0.95); }
+    .threshold-line { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(255,255,255,0.15); }
   </style>
 </head>
-<body class="min-h-screen text-white">
+<body class="min-h-screen text-slate-100 antialiased">
 
   <!-- Header -->
-  <header class="glass sticky top-0 z-50 px-6 py-4 flex items-center justify-between">
-    <div class="flex items-center gap-3">
-      <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center text-lg font-bold">⚙</div>
-      <div>
-        <h1 class="text-xl font-bold bg-gradient-to-r from-cyan-400 to-blue-400 bg-clip-text text-transparent">Predictive Maintenance IoT</h1>
-        <p class="text-xs text-slate-400">Kafka · RabbitMQ · Tiempo Real</p>
-      </div>
-    </div>
-    <div class="flex items-center gap-4">
-      <div id="ws-telemetry-status" class="flex items-center gap-2 text-xs"><span class="w-2 h-2 rounded-full bg-red-500"></span><span class="text-slate-400">Telemetría: Desconectado</span></div>
-      <div id="ws-operator-status" class="flex items-center gap-2 text-xs"><span class="w-2 h-2 rounded-full bg-red-500"></span><span class="text-slate-400">Operador: Desconectado</span></div>
-      <div id="clock" class="text-sm text-slate-300 font-mono"></div>
-    </div>
-  </header>
-
-  <main class="max-w-[1600px] mx-auto p-6 space-y-6">
-    <!-- Stats Bar -->
-    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-      <div class="glass rounded-2xl p-4 text-center"><p class="text-3xl font-bold text-cyan-400" id="stat-total">0</p><p class="text-xs text-slate-400 mt-1">Sensores Activos</p></div>
-      <div class="glass rounded-2xl p-4 text-center"><p class="text-3xl font-bold text-green-400" id="stat-ok">0</p><p class="text-xs text-slate-400 mt-1">Estado OK</p></div>
-      <div class="glass rounded-2xl p-4 text-center"><p class="text-3xl font-bold text-yellow-400" id="stat-warn">0</p><p class="text-xs text-slate-400 mt-1">Advertencias</p></div>
-      <div class="glass rounded-2xl p-4 text-center"><p class="text-3xl font-bold text-red-400" id="stat-crit">0</p><p class="text-xs text-slate-400 mt-1">Críticos</p></div>
-    </div>
-
-    <div class="grid lg:grid-cols-3 gap-6">
-      <!-- Sensor Grid -->
-      <div class="lg:col-span-2">
-        <div class="glass rounded-2xl p-6">
-          <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">📊 Grilla de Sensores — Telemetría en Vivo</h2>
-          <div id="sensor-grid" class="grid grid-cols-2 md:grid-cols-5 gap-3"></div>
+  <header class="panel sticky top-0 z-50 border-b border-slate-700/40">
+    <div class="max-w-[1680px] mx-auto px-5 py-3 flex flex-wrap items-center justify-between gap-4">
+      <div class="flex items-center gap-4">
+        <div class="w-11 h-11 rounded-2xl bg-gradient-to-br from-cyan-400 to-blue-600 flex items-center justify-center shadow-lg shadow-cyan-500/20">
+          <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+        </div>
+        <div>
+          <h1 class="text-lg font-bold tracking-tight text-white">Centro de Operaciones IoT</h1>
+          <p class="text-[11px] text-slate-400 tracking-wide">Kafka · RabbitMQ · Mantenimiento predictivo</p>
         </div>
       </div>
 
-      <!-- Activity Log -->
-      <div class="glass rounded-2xl p-6 flex flex-col max-h-[500px]">
-        <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">📜 Log de Actividad</h2>
-        <div id="activity-log" class="flex-1 overflow-y-auto space-y-2 text-xs"></div>
+      <div class="flex flex-wrap items-center gap-3">
+        <div id="ws-telemetry-status" class="flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-800/60 border border-slate-700/50 text-xs">
+          <span class="w-2 h-2 rounded-full bg-red-500"></span><span class="text-slate-400">Telemetría</span>
+        </div>
+        <div id="ws-operator-status" class="flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-800/60 border border-slate-700/50 text-xs">
+          <span class="w-2 h-2 rounded-full bg-red-500"></span><span class="text-slate-400">Operador</span>
+        </div>
+        <div class="px-3 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-xs text-amber-300">
+          Pendientes: <span id="pending-count" class="font-bold">0</span>
+        </div>
+        <div id="clock" class="mono text-sm text-cyan-300/90 tabular-nums px-3 py-1.5 rounded-lg bg-slate-900/80 border border-slate-700/50"></div>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-[1680px] mx-auto p-5 space-y-5">
+
+    <!-- Stats -->
+    <div class="grid grid-cols-2 lg:grid-cols-5 gap-3">
+      <div class="stat-card panel rounded-2xl p-4 border border-slate-700/30">
+        <p class="text-[10px] uppercase tracking-widest text-slate-500 mb-1">Sensores</p>
+        <p class="text-3xl font-extrabold text-cyan-400 tabular-nums" id="stat-total">0</p>
+      </div>
+      <div class="stat-card panel rounded-2xl p-4 border border-green-800/30">
+        <p class="text-[10px] uppercase tracking-widest text-slate-500 mb-1">OK</p>
+        <p class="text-3xl font-extrabold text-green-400 tabular-nums" id="stat-ok">0</p>
+      </div>
+      <div class="stat-card panel rounded-2xl p-4 border border-yellow-800/30">
+        <p class="text-[10px] uppercase tracking-widest text-slate-500 mb-1">Advertencia</p>
+        <p class="text-3xl font-extrabold text-yellow-400 tabular-nums" id="stat-warn">0</p>
+      </div>
+      <div class="stat-card panel rounded-2xl p-4 border border-red-800/30">
+        <p class="text-[10px] uppercase tracking-widest text-slate-500 mb-1">Crítico</p>
+        <p class="text-3xl font-extrabold text-red-400 tabular-nums" id="stat-crit">0</p>
+      </div>
+      <div class="stat-card panel rounded-2xl p-4 border border-violet-800/30">
+        <p class="text-[10px] uppercase tracking-widest text-slate-500 mb-1">Decisiones</p>
+        <p class="text-3xl font-extrabold text-violet-400 tabular-nums" id="stat-decisions">0</p>
       </div>
     </div>
 
-    <!-- Operator Decision Panel -->
-    <div class="glass rounded-2xl p-6">
-      <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">🛡️ Consola del Operador — Decisiones Pendientes</h2>
+    <!-- Legend -->
+    <div class="panel rounded-xl px-4 py-2.5 flex flex-wrap items-center gap-4 text-[11px] text-slate-400">
+      <span class="font-semibold text-slate-300">Umbrales:</span>
+      <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-sm bg-green-500/80"></span> OK ≤ 75 mm/s</span>
+      <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-sm bg-yellow-500/80"></span> Warning: 3 lecturas &gt; 75</span>
+      <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-sm bg-red-500/80"></span> Critical &gt; 90 mm/s</span>
+      <span class="ml-auto mono text-slate-500">Escala 40–100 mm/s</span>
+    </div>
+
+    <div class="grid xl:grid-cols-12 gap-5">
+      <!-- Sensors -->
+      <section class="xl:col-span-7 panel rounded-2xl p-5">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-base font-bold text-white flex items-center gap-2">
+            <span class="w-8 h-8 rounded-lg bg-cyan-500/15 flex items-center justify-center text-cyan-400">📊</span>
+            Mapa de planta — Telemetría
+          </h2>
+          <span class="text-[10px] text-slate-500 mono" id="last-telemetry-ts">—</span>
+        </div>
+        <div id="sensor-grid" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3"></div>
+      </section>
+
+      <!-- Activity + filters -->
+      <section class="xl:col-span-5 panel rounded-2xl p-5 flex flex-col min-h-[420px]">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="text-base font-bold text-white flex items-center gap-2">
+            <span class="w-8 h-8 rounded-lg bg-violet-500/15 flex items-center justify-center text-violet-400">📜</span>
+            Registro de eventos
+          </h2>
+          <button onclick="clearActivityLog()" class="text-[10px] text-slate-500 hover:text-slate-300 px-2 py-1 rounded border border-slate-700/50">Limpiar</button>
+        </div>
+        <div class="flex flex-wrap gap-1.5 mb-3" id="log-filters">
+          <button data-filter="all" class="filter-chip active text-[10px] px-2.5 py-1 rounded-full border border-slate-600/50 text-slate-400">Todos</button>
+          <button data-filter="info" class="filter-chip text-[10px] px-2.5 py-1 rounded-full border border-slate-600/50 text-slate-400">Sistema</button>
+          <button data-filter="warn" class="filter-chip text-[10px] px-2.5 py-1 rounded-full border border-slate-600/50 text-slate-400">Alertas</button>
+          <button data-filter="ok" class="filter-chip text-[10px] px-2.5 py-1 rounded-full border border-slate-600/50 text-slate-400">Decisiones</button>
+        </div>
+        <div id="activity-log" class="flex-1 overflow-y-auto space-y-1.5 pr-1"></div>
+      </section>
+    </div>
+
+    <!-- Pending alerts -->
+    <section class="panel rounded-2xl p-5 border-l-4 border-l-amber-500/60">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-base font-bold text-white flex items-center gap-2">
+          <span class="w-8 h-8 rounded-lg bg-amber-500/15 flex items-center justify-center text-amber-400">🛡️</span>
+          Acciones requeridas — Operador humano
+        </h2>
+        <span class="text-[10px] px-2 py-1 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20">Flujo: Kafka → RabbitMQ → WS :8082</span>
+      </div>
       <div id="alerts-panel" class="space-y-3">
-        <p class="text-slate-500 text-sm italic" id="no-alerts-msg">Sin alertas pendientes. El sistema opera con normalidad.</p>
+        <div id="no-alerts-msg" class="flex flex-col items-center justify-center py-12 text-center">
+          <div class="w-14 h-14 rounded-full bg-green-500/10 flex items-center justify-center text-2xl mb-3">✓</div>
+          <p class="text-slate-400 text-sm font-medium">Sin alertas pendientes</p>
+          <p class="text-slate-600 text-xs mt-1">La planta opera dentro de parámetros normales</p>
+        </div>
       </div>
-    </div>
+    </section>
 
-    <!-- Resolved Actions -->
-    <div class="glass rounded-2xl p-6">
-      <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">✅ Acciones Resueltas</h2>
-      <div id="resolved-panel" class="space-y-2 max-h-64 overflow-y-auto">
-        <p class="text-slate-500 text-sm italic" id="no-resolved-msg">Ninguna acción resuelta aún.</p>
-      </div>
+    <div class="grid lg:grid-cols-2 gap-5">
+      <!-- Resolved -->
+      <section class="panel rounded-2xl p-5">
+        <h2 class="text-base font-bold text-white flex items-center gap-2 mb-4">
+          <span class="w-8 h-8 rounded-lg bg-green-500/15 flex items-center justify-center text-green-400">✅</span>
+          Decisiones ejecutadas
+        </h2>
+        <div id="resolved-panel" class="space-y-2 max-h-72 overflow-y-auto">
+          <p class="text-slate-600 text-sm italic py-6 text-center" id="no-resolved-msg">Ninguna decisión registrada aún</p>
+        </div>
+      </section>
+
+      <!-- Audit trail table -->
+      <section class="panel rounded-2xl p-5">
+        <h2 class="text-base font-bold text-white flex items-center gap-2 mb-4">
+          <span class="w-8 h-8 rounded-lg bg-blue-500/15 flex items-center justify-center text-blue-400">🔗</span>
+          Trazabilidad end-to-end
+        </h2>
+        <div class="overflow-x-auto max-h-72 overflow-y-auto rounded-xl border border-slate-700/40">
+          <table class="w-full text-left text-[11px]">
+            <thead class="sticky top-0 bg-slate-900/95 text-slate-500 uppercase tracking-wider">
+              <tr>
+                <th class="px-3 py-2 font-semibold">Hora</th>
+                <th class="px-3 py-2 font-semibold">Etapa</th>
+                <th class="px-3 py-2 font-semibold">Sensor</th>
+                <th class="px-3 py-2 font-semibold">ID / Detalle</th>
+              </tr>
+            </thead>
+            <tbody id="audit-trail" class="divide-y divide-slate-800/80 text-slate-300"></tbody>
+          </table>
+        </div>
+      </section>
     </div>
   </main>
 
 <script>
-// ═══════════════════════════════════════════════════════════
-//  DASHBOARD LOGIC — Dual WebSocket + REST Integration
-// ═══════════════════════════════════════════════════════════
-
 const TELEMETRY_WS = "ws://localhost:8081";
 const OPERATOR_WS  = "ws://localhost:8082";
 const DECIDE_URL   = "http://localhost:3001/decide";
 
 const sensorState = new Map();
 const pendingAlerts = new Map();
+const activityEntries = [];
 let alertCounter = 0;
+let decisionCount = 0;
+let logFilter = "all";
+let seqId = 0;
 
-// ── Clock ──────────────────────────────────────────────────
+const STAGE_STYLES = {
+  TELEMETRÍA: "bg-cyan-500/15 text-cyan-300 border-cyan-500/30",
+  DETECCIÓN: "bg-orange-500/15 text-orange-300 border-orange-500/30",
+  RABBITMQ: "bg-amber-500/15 text-amber-300 border-amber-500/30",
+  OPERADOR: "bg-violet-500/15 text-violet-300 border-violet-500/30",
+  DECISIÓN: "bg-green-500/15 text-green-300 border-green-500/30",
+  SISTEMA: "bg-slate-500/15 text-slate-300 border-slate-500/30",
+};
+
+// ── Utilidades ─────────────────────────────────────────────
+function nowTime() {
+  return new Date().toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+function nowFull() {
+  return new Date().toLocaleString("es-CO");
+}
+function shortId(id) {
+  if (!id) return "—";
+  return id.length > 12 ? id.slice(0, 8) + "…" : id;
+}
+function sensorLabel(alert) {
+  const sid = alert?.sensor_id;
+  if (!sid) return "—";
+  if (String(sid).length <= 2) return `Sensor ${sid}`;
+  return sid;
+}
+function copyText(text, btn) {
+  navigator.clipboard.writeText(text).then(() => {
+    const orig = btn.textContent;
+    btn.textContent = "✓";
+    setTimeout(() => { btn.textContent = orig; }, 1200);
+  });
+}
+function updatePendingCount() {
+  document.getElementById("pending-count").textContent = pendingAlerts.size;
+}
+
 setInterval(() => {
-  document.getElementById("clock").textContent = new Date().toLocaleTimeString("es-CO");
+  document.getElementById("clock").textContent = nowFull();
 }, 1000);
+
+// ── Trazabilidad ───────────────────────────────────────────
+function addAudit(stage, sensor, detail, meta = {}) {
+  const tbody = document.getElementById("audit-trail");
+  document.querySelector("#no-audit-placeholder")?.remove();
+  const tr = document.createElement("tr");
+  tr.className = "slide-in hover:bg-slate-800/40";
+  const stageCls = STAGE_STYLES[stage] || STAGE_STYLES.SISTEMA;
+  tr.innerHTML = `
+    <td class="px-3 py-2 mono text-slate-500 whitespace-nowrap">${nowTime()}</td>
+    <td class="px-3 py-2"><span class="px-2 py-0.5 rounded border text-[10px] font-semibold ${stageCls}">${stage}</span></td>
+    <td class="px-3 py-2 font-medium">${sensor || "—"}</td>
+    <td class="px-3 py-2 mono text-slate-400 max-w-[200px] truncate" title="${detail}">${detail}</td>`;
+  tbody.prepend(tr);
+  while (tbody.children.length > 50) tbody.removeChild(tbody.lastChild);
+}
 
 // ── Stats ──────────────────────────────────────────────────
 function updateStats() {
@@ -111,9 +290,10 @@ function updateStats() {
   document.getElementById("stat-ok").textContent = values.filter(s => s.status === "OK").length;
   document.getElementById("stat-warn").textContent = values.filter(s => s.status === "WARNING").length;
   document.getElementById("stat-crit").textContent = values.filter(s => s.status === "CRITICAL").length;
+  document.getElementById("stat-decisions").textContent = decisionCount;
 }
 
-// ── Sensor Card ────────────────────────────────────────────
+// ── Sensor cards ───────────────────────────────────────────
 function renderSensorCard(sensor) {
   const grid = document.getElementById("sensor-grid");
   let card = document.getElementById("card-" + sensor.sensor_id);
@@ -122,83 +302,187 @@ function renderSensorCard(sensor) {
     card.id = "card-" + sensor.sensor_id;
     grid.appendChild(card);
   }
-  const colors = {
-    OK: { bg: "from-green-900/40 to-green-800/20", border: "border-green-700/40", text: "text-green-400", bar: "bg-green-500", glow: "" },
-    WARNING: { bg: "from-yellow-900/40 to-yellow-800/20", border: "border-yellow-600/50", text: "text-yellow-400", bar: "bg-yellow-500", glow: "glow-yellow" },
-    CRITICAL: { bg: "from-red-900/40 to-red-800/20", border: "border-red-600/50 pulse-critical", text: "text-red-400", bar: "bg-red-500", glow: "glow-red" },
+  const styles = {
+    OK: { ring: "ring-green-500/20", bg: "from-emerald-950/50 to-slate-900/80", border: "border-green-800/40", text: "text-green-400", bar: "bg-green-500", badge: "bg-green-500/20 text-green-300", glow: "" },
+    WARNING: { ring: "ring-yellow-500/30", bg: "from-yellow-950/50 to-slate-900/80", border: "border-yellow-700/50", text: "text-yellow-400", bar: "bg-yellow-500", badge: "bg-yellow-500/20 text-yellow-300", glow: "glow-yellow" },
+    CRITICAL: { ring: "ring-red-500/40", bg: "from-red-950/60 to-slate-900/80", border: "border-red-600/60 pulse-critical", text: "text-red-400", bar: "bg-red-500", badge: "bg-red-500/25 text-red-300", glow: "glow-red" },
   };
-  const c = colors[sensor.status] || colors.OK;
-  const pct = Math.min(100, ((sensor.vibration - 40) / 60) * 100);
-  card.className = `rounded-xl p-3 bg-gradient-to-br ${c.bg} border ${c.border} ${c.glow} transition-all duration-300`;
+  const s = styles[sensor.status] || styles.OK;
+  const vib = sensor.vibration ?? 0;
+  const pct = Math.min(100, Math.max(0, ((vib - 40) / 60) * 100));
+  const warnPos = ((75 - 40) / 60) * 100;
+  const critPos = ((90 - 40) / 60) * 100;
+  const ts = sensor.timestamp ? new Date(sensor.timestamp).toLocaleTimeString("es-CO") : nowTime();
+
+  card.className = `relative rounded-xl p-3.5 bg-gradient-to-br ${s.bg} border ${s.border} ring-1 ${s.ring} ${s.glow} transition-all duration-300`;
   card.innerHTML = `
-    <div class="flex items-center justify-between mb-2">
-      <span class="text-xs font-semibold text-slate-300">${sensor.sensor_id}</span>
-      <span class="text-[10px] px-2 py-0.5 rounded-full font-bold ${c.text} bg-black/30">${sensor.status}</span>
+    <div class="flex items-start justify-between gap-1 mb-2">
+      <div>
+        <p class="text-[10px] text-slate-500 uppercase tracking-wide">${sensor.sensor_code ? "Código " + sensor.sensor_code : "ID"}</p>
+        <p class="text-sm font-bold text-white truncate">${sensor.sensor_id}</p>
+      </div>
+      <span class="text-[9px] px-2 py-0.5 rounded-full font-bold ${s.badge} shrink-0">${sensor.status}</span>
     </div>
-    <p class="text-2xl font-bold ${c.text}">${sensor.vibration}<span class="text-xs font-normal text-slate-400 ml-1">mm/s</span></p>
-    <div class="w-full h-1.5 bg-black/30 rounded-full mt-2 overflow-hidden"><div class="sensor-bar h-full rounded-full ${c.bar}" style="width:${pct}%"></div></div>`;
+    <p class="text-2xl font-extrabold ${s.text} tabular-nums leading-none">${vib}<span class="text-[10px] font-normal text-slate-500 ml-0.5">mm/s</span></p>
+    <div class="relative w-full h-2 bg-black/40 rounded-full mt-3 overflow-visible">
+      <div class="threshold-line" style="left:${warnPos}%"></div>
+      <div class="threshold-line" style="left:${critPos}%"></div>
+      <div class="sensor-bar h-full rounded-full ${s.bar}" style="width:${pct}%"></div>
+    </div>
+    <p class="text-[9px] text-slate-600 mt-2 mono">↻ ${ts}</p>`;
 }
 
-// ── Activity Log ───────────────────────────────────────────
-function addLog(msg, type) {
+// ── Activity log estructurado ──────────────────────────────
+function addLog(msg, type, meta = {}) {
+  const entry = { id: ++seqId, msg, type, time: nowTime(), full: nowFull(), ...meta };
+  activityEntries.unshift(entry);
+  if (activityEntries.length > 100) activityEntries.pop();
+  renderActivityLog();
+}
+
+function renderActivityLog() {
   const log = document.getElementById("activity-log");
-  const colors = { info: "text-cyan-400", warn: "text-yellow-400", crit: "text-red-400", ok: "text-green-400" };
-  const icons = { info: "📡", warn: "⚠️", crit: "🔴", ok: "✅" };
-  const el = document.createElement("div");
-  el.className = `${colors[type] || "text-slate-400"} slide-in`;
-  el.textContent = `${icons[type] || "•"} ${new Date().toLocaleTimeString("es-CO")} — ${msg}`;
-  log.prepend(el);
-  while (log.children.length > 80) log.removeChild(log.lastChild);
+  log.innerHTML = "";
+  const filtered = activityEntries.filter(e => logFilter === "all" || e.type === logFilter);
+  if (!filtered.length) {
+    log.innerHTML = '<p class="text-slate-600 text-xs text-center py-8">Sin eventos para este filtro</p>';
+    return;
+  }
+  const typeStyles = {
+    info: { border: "border-l-cyan-500/60", bg: "bg-cyan-950/20", icon: "📡", label: "SYS" },
+    warn: { border: "border-l-yellow-500/60", bg: "bg-yellow-950/20", icon: "⚠️", label: "ALR" },
+    crit: { border: "border-l-red-500/60", bg: "bg-red-950/20", icon: "🔴", label: "CRT" },
+    ok: { border: "border-l-green-500/60", bg: "bg-green-950/20", icon: "✅", label: "ACK" },
+  };
+  filtered.forEach(e => {
+    const st = typeStyles[e.type] || typeStyles.info;
+    const el = document.createElement("div");
+    el.className = `slide-in flex gap-2 px-2.5 py-2 rounded-lg border-l-2 ${st.border} ${st.bg}`;
+    el.innerHTML = `
+      <span class="mono text-[9px] text-slate-600 shrink-0 pt-0.5">#${String(e.id).padStart(3,"0")}</span>
+      <div class="min-w-0 flex-1">
+        <div class="flex items-center gap-2 mb-0.5">
+          <span class="text-[9px] font-bold text-slate-500">${st.label}</span>
+          <span class="mono text-[9px] text-slate-600">${e.time}</span>
+          ${e.sensor ? `<span class="text-[9px] text-slate-500 truncate">${e.sensor}</span>` : ""}
+        </div>
+        <p class="text-[11px] text-slate-300 leading-snug">${st.icon} ${e.msg}</p>
+        ${e.trace ? `<p class="mono text-[9px] text-slate-600 mt-0.5 truncate">${e.trace}</p>` : ""}
+      </div>`;
+    log.appendChild(el);
+  });
 }
 
-function sensorLabel(alert) {
-  const sid = alert.sensor_id;
-  if (!sid) return "Sensor desconocido";
-  if (String(sid).length <= 2) return `Sensor ${sid}`;
-  return sid;
+function clearActivityLog() {
+  activityEntries.length = 0;
+  renderActivityLog();
 }
 
-// ── Alert Card ─────────────────────────────────────────────
+document.getElementById("log-filters").addEventListener("click", (ev) => {
+  const btn = ev.target.closest("[data-filter]");
+  if (!btn) return;
+  logFilter = btn.dataset.filter;
+  document.querySelectorAll(".filter-chip").forEach(b => b.classList.toggle("active", b === btn));
+  renderActivityLog();
+});
+
+// ── Alert cards con trazabilidad ───────────────────────────
 function renderAlertCard(alert) {
   const cardDomId = "alert-" + (++alertCounter);
   const alertType = alert.type || alert.alert_type;
   const alertId = alert.alert_id || cardDomId;
-  pendingAlerts.set(cardDomId, { ...alert, alert_id: alertId, alert_type: alertType });
+  const enriched = { ...alert, alert_id: alertId, alert_type: alertType, received_at: nowFull() };
+  pendingAlerts.set(cardDomId, enriched);
+  updatePendingCount();
+
   document.getElementById("no-alerts-msg")?.remove();
   const panel = document.getElementById("alerts-panel");
   const isCrit = alertType === "CRITICAL";
   const card = document.createElement("div");
   card.id = cardDomId;
-  card.className = `rounded-xl p-4 border slide-in ${isCrit ? "bg-red-950/40 border-red-700/50 pulse-critical" : "bg-yellow-950/30 border-yellow-700/40"}`;
+  card.dataset.alertId = alertId;
+  card.className = `rounded-2xl p-5 border slide-in ${isCrit ? "bg-gradient-to-br from-red-950/50 to-slate-900/80 border-red-600/50 pulse-critical" : "bg-gradient-to-br from-yellow-950/40 to-slate-900/80 border-yellow-600/40"}`;
+
   const btns = (alert.options || []).map(opt => {
-    const style = opt.includes("APAGADO") ? "bg-red-600 hover:bg-red-500" :
-                  opt.includes("PROGRAMAR") ? "bg-blue-600 hover:bg-blue-500" :
-                  opt.includes("RECONOCER") ? "bg-yellow-600 hover:bg-yellow-500" :
+    const style = opt.includes("APAGADO") ? "bg-red-600 hover:bg-red-500 shadow-red-900/40" :
+                  opt.includes("PROGRAMAR") ? "bg-blue-600 hover:bg-blue-500 shadow-blue-900/40" :
+                  opt.includes("RECONOCER") ? "bg-amber-600 hover:bg-amber-500 shadow-amber-900/40" :
                   "bg-slate-600 hover:bg-slate-500";
     const safeOpt = opt.replace(/'/g, "\\'");
-    return `<button onclick="handleDecision('${cardDomId}','${safeOpt}')" class="${style} text-white text-xs font-semibold px-4 py-2 rounded-lg transition-all duration-200 hover:scale-105 active:scale-95">${opt.replace(/_/g," ")}</button>`;
+    const delayHint = opt.includes("24H") ? '<span class="block text-[9px] opacity-70">Delayed 24h</span>' :
+                      opt.includes("10_MIN") ? '<span class="block text-[9px] opacity-70">Delayed 10min</span>' : "";
+    return `<button onclick="handleDecision('${cardDomId}','${safeOpt}')" class="${style} shadow-lg text-white text-xs font-semibold px-4 py-2.5 rounded-xl transition-all hover:scale-[1.02] active:scale-95 text-left">${opt.replace(/_/g," ")}${delayHint}</button>`;
   }).join("");
+
+  const detected = alert.detected_at || alert.routed_at || "—";
+  const routed = alert.routed_at || "—";
+
   card.innerHTML = `
-    <div class="flex items-start justify-between mb-3">
-      <div>
-        <span class="text-sm font-bold ${isCrit ? "text-red-400" : "text-yellow-400"}">${isCrit ? "🔴 CRÍTICO" : "🟡 ADVERTENCIA"} — ${sensorLabel(alert)}</span>
-        <p class="text-xs text-slate-400 mt-1">${alert.message || "Alerta detectada"}</p>
-        <p class="text-[10px] text-slate-500 font-mono mt-1">ID: ${alertId}</p>
+    <div class="flex flex-wrap items-start justify-between gap-3 mb-4">
+      <div class="flex items-start gap-3">
+        <div class="w-10 h-10 rounded-xl ${isCrit ? "bg-red-500/20 text-red-400" : "bg-yellow-500/20 text-yellow-400"} flex items-center justify-center text-lg font-bold shrink-0">${isCrit ? "!" : "△"}</div>
+        <div>
+          <div class="flex items-center gap-2 flex-wrap">
+            <span class="text-sm font-bold ${isCrit ? "text-red-300" : "text-yellow-300"}">${isCrit ? "CRÍTICO" : "ADVERTENCIA"}</span>
+            <span class="text-white font-semibold">${sensorLabel(alert)}</span>
+            ${alert.vibration != null ? `<span class="text-[10px] px-2 py-0.5 rounded bg-black/30 text-slate-400 mono">${alert.vibration} mm/s</span>` : ""}
+          </div>
+          <p class="text-xs text-slate-400 mt-1 max-w-lg">${alert.message || "Se requiere decisión del operador"}</p>
+        </div>
       </div>
-      <span class="text-[10px] text-slate-500 font-mono">${new Date().toLocaleTimeString("es-CO")}</span>
+      <div class="text-right shrink-0">
+        <p class="text-[10px] text-slate-500">Recibido</p>
+        <p class="mono text-[10px] text-slate-400">${nowTime()}</p>
+      </div>
     </div>
+
+    <div class="flex items-center gap-2 mb-4 p-2.5 rounded-lg bg-black/25 border border-slate-700/40">
+      <span class="text-[10px] text-slate-500 shrink-0">alert_id</span>
+      <code class="mono text-[10px] text-cyan-300/90 flex-1 truncate" id="aid-${cardDomId}">${alertId}</code>
+      <button class="copy-btn text-[10px] px-2 py-1 rounded bg-slate-700/50 hover:bg-slate-600/50 text-slate-300" onclick="copyText('${alertId}', this)">Copiar</button>
+    </div>
+
+    <div class="grid sm:grid-cols-4 gap-2 mb-4 relative">
+      ${traceStep("1", "Kafka", "alerts_" + (isCrit ? "critical" : "warning"), true)}
+      ${traceStep("2", "alert_router", "human_alerts (Fanout)", true)}
+      ${traceStep("3", "operator_console", "WS :8082", true)}
+      ${traceStep("4", "Tu decisión", "POST /decide", false)}
+    </div>
+
+    <div class="grid sm:grid-cols-2 gap-2 text-[10px] mono text-slate-600 mb-4 px-1">
+      <span>detected: ${detected}</span>
+      <span>routed: ${routed}</span>
+    </div>
+
+    <p class="text-[10px] uppercase tracking-wider text-slate-500 mb-2 font-semibold">Opciones disponibles</p>
     <div class="flex flex-wrap gap-2">${btns}</div>`;
+
   panel.prepend(card);
+  addAudit("RABBITMQ", sensorLabel(alert), shortId(alertId) + " → operador");
 }
 
-// ── Handle Decision ────────────────────────────────────────
+function traceStep(num, label, detail, done) {
+  return `
+    <div class="trace-step relative pl-7 pb-1">
+      <span class="absolute left-0 top-0.5 w-6 h-6 rounded-full ${done ? "bg-cyan-500/20 text-cyan-400 border border-cyan-500/40" : "bg-slate-700/50 text-slate-500 border border-slate-600/50"} flex items-center justify-center text-[10px] font-bold">${num}</span>
+      <p class="text-[10px] font-semibold text-slate-300">${label}</p>
+      <p class="text-[9px] text-slate-600 mono truncate">${detail}</p>
+    </div>`;
+}
+
+// ── Decisiones ─────────────────────────────────────────────
 async function handleDecision(cardId, action) {
   const alert = pendingAlerts.get(cardId);
   if (!alert) return;
   const card = document.getElementById(cardId);
-  const sensorId = alert.sensor_id;
   const alertType = alert.type || alert.alert_type;
-  card.querySelectorAll("button").forEach(b => { b.disabled = true; b.classList.add("opacity-50"); });
+  card.querySelectorAll("button").forEach(b => { b.disabled = true; b.classList.add("opacity-40", "cursor-not-allowed"); });
+
+  const statusEl = document.createElement("div");
+  statusEl.className = "mt-3 text-xs text-cyan-400 flex items-center gap-2";
+  statusEl.innerHTML = '<span class="inline-block w-3 h-3 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin"></span> Enviando a action_dispatcher…';
+  card.appendChild(statusEl);
+
   try {
     const res = await fetch(DECIDE_URL, {
       method: "POST",
@@ -206,97 +490,164 @@ async function handleDecision(cardId, action) {
       body: JSON.stringify({
         alert_id: alert.alert_id,
         chosen_action: action,
-        sensor_id: sensorId,
+        sensor_id: alert.sensor_id,
         type: alertType,
         alert_type: alertType,
+        vibration: alert.vibration,
       }),
     });
     const data = await res.json();
+    statusEl.remove();
+
     if (data.status === "ACK") {
+      decisionCount++;
+      updateStats();
       card.classList.add("fade-out");
-      setTimeout(() => { card.remove(); pendingAlerts.delete(cardId); checkEmptyAlerts(); }, 300);
-      addLog(`${sensorLabel(alert)}: ${action.replace(/_/g," ")} — ACK`, "ok");
-      addResolved(sensorLabel(alert), action, alertType);
+      setTimeout(() => {
+        card.remove();
+        pendingAlerts.delete(cardId);
+        updatePendingCount();
+        checkEmptyAlerts();
+      }, 400);
+
+      const route = data.routing_key || data.queue || data.exchange || action;
+      const delayNote = data.delay_ms ? ` (delay ${data.delay_ms}ms)` : "";
+      addLog(`${sensorLabel(alert)}: ${action.replace(/_/g," ")}`, "ok", {
+        sensor: sensorLabel(alert),
+        trace: `alert_id=${shortId(alert.alert_id)} → ${route}${delayNote}`,
+      });
+      addAudit("DECISIÓN", sensorLabel(alert), `${action} → ${route}`);
+      addResolved(alert, action, alertType, data);
     } else {
-      addLog(`${sensorLabel(alert)}: Error — ${data.error}`, "crit");
+      addLog(`Error: ${data.error}`, "crit", { sensor: sensorLabel(alert) });
+      card.querySelectorAll("button").forEach(b => { b.disabled = false; b.classList.remove("opacity-40", "cursor-not-allowed"); });
     }
   } catch (err) {
-    addLog(`Error de red: ${err.message}`, "crit");
-    card.querySelectorAll("button").forEach(b => { b.disabled = false; b.classList.remove("opacity-50"); });
+    statusEl.remove();
+    addLog(`Red: ${err.message}`, "crit");
+    card.querySelectorAll("button").forEach(b => { b.disabled = false; b.classList.remove("opacity-40", "cursor-not-allowed"); });
   }
 }
 
 function checkEmptyAlerts() {
   const panel = document.getElementById("alerts-panel");
-  if (panel.children.length === 0) {
-    panel.innerHTML = '<p class="text-slate-500 text-sm italic" id="no-alerts-msg">Sin alertas pendientes. El sistema opera con normalidad.</p>';
+  if (pendingAlerts.size === 0 && !document.getElementById("no-alerts-msg")) {
+    panel.innerHTML = `
+      <div id="no-alerts-msg" class="flex flex-col items-center justify-center py-12 text-center">
+        <div class="w-14 h-14 rounded-full bg-green-500/10 flex items-center justify-center text-2xl mb-3">✓</div>
+        <p class="text-slate-400 text-sm font-medium">Sin alertas pendientes</p>
+        <p class="text-slate-600 text-xs mt-1">La planta opera dentro de parámetros normales</p>
+      </div>`;
   }
 }
 
-function addResolved(sensorId, action, alertType) {
+function addResolved(alert, action, alertType, apiData) {
   document.getElementById("no-resolved-msg")?.remove();
   const panel = document.getElementById("resolved-panel");
   const el = document.createElement("div");
-  el.className = "flex items-center justify-between glass rounded-lg px-4 py-2 slide-in";
-  el.innerHTML = `<span class="text-xs"><span class="font-bold text-green-400">✅</span> ${sensorId} — ${action.replace(/_/g," ")}</span><span class="text-[10px] text-slate-500 font-mono">${new Date().toLocaleTimeString("es-CO")}</span>`;
+  el.className = "slide-in rounded-xl p-3.5 bg-green-950/25 border border-green-800/30";
+  const route = apiData.routing_key || apiData.queue || apiData.exchange || "—";
+  const isCrit = alertType === "CRITICAL";
+  el.innerHTML = `
+    <div class="flex items-start justify-between gap-2">
+      <div class="flex items-center gap-2">
+        <span class="w-7 h-7 rounded-lg bg-green-500/20 text-green-400 flex items-center justify-center text-sm">✓</span>
+        <div>
+          <p class="text-xs font-bold text-white">${sensorLabel(alert)} <span class="font-normal text-slate-500">· ${action.replace(/_/g," ")}</span></p>
+          <p class="mono text-[9px] text-slate-500 mt-0.5">${shortId(alert.alert_id)}</p>
+        </div>
+      </div>
+      <span class="text-[9px] px-1.5 py-0.5 rounded ${isCrit ? "bg-red-500/15 text-red-400" : "bg-yellow-500/15 text-yellow-400"}">${alertType}</span>
+    </div>
+    <div class="mt-2 flex flex-wrap gap-2 text-[10px]">
+      <span class="px-2 py-0.5 rounded bg-slate-800/80 text-slate-400 mono">→ ${route}</span>
+      ${apiData.delay_ms ? `<span class="px-2 py-0.5 rounded bg-amber-900/30 text-amber-400 mono">⏱ ${apiData.delay_ms}ms</span>` : ""}
+      <span class="text-slate-600 mono ml-auto">${nowTime()}</span>
+    </div>`;
   panel.prepend(el);
-  while (panel.children.length > 20) panel.removeChild(panel.lastChild);
+  while (panel.children.length > 25) panel.removeChild(panel.lastChild);
 }
 
-// ═══ WebSocket: Telemetría (port 8081) ═════════════════════
+// ── WebSockets ─────────────────────────────────────────────
+function setWsStatus(elId, connected, label) {
+  const el = document.getElementById(elId);
+  if (connected) {
+    el.innerHTML = `<span class="w-2 h-2 rounded-full bg-green-400 animate-pulse shadow shadow-green-500/50"></span><span class="text-green-400 font-medium">${label}</span>`;
+  } else {
+    el.innerHTML = `<span class="w-2 h-2 rounded-full bg-red-500"></span><span class="text-slate-500">${label}</span>`;
+  }
+}
+
 function connectTelemetry() {
   const ws = new WebSocket(TELEMETRY_WS);
-  const el = document.getElementById("ws-telemetry-status");
   ws.onopen = () => {
-    el.innerHTML = '<span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span><span class="text-green-400">Telemetría: Conectado</span>';
-    addLog("WebSocket Telemetría conectado (Kafka)", "info");
+    setWsStatus("ws-telemetry-status", true, "Telemetría");
+    addLog("Conexión WebSocket :8081 (Kafka)", "info");
+    addAudit("SISTEMA", "—", "WS telemetría activo");
   };
   ws.onmessage = (e) => {
     const msg = JSON.parse(e.data);
+    document.getElementById("last-telemetry-ts").textContent = "Último: " + nowTime();
+
     if (msg.type === "FULL_STATE") {
       msg.data.forEach(s => { sensorState.set(s.sensor_id, s); renderSensorCard(s); });
-    } else if (msg.type === "SENSOR_UPDATE" || msg.type === "ALERT_CRITICAL" || msg.type === "ALERT_WARNING") {
+      addLog(`Snapshot: ${msg.data.length} sensores`, "info");
+    } else if (msg.type === "SENSOR_UPDATE") {
       sensorState.set(msg.data.sensor_id, msg.data);
       renderSensorCard(msg.data);
-      if (msg.type === "ALERT_CRITICAL") addLog(`${msg.data.sensor_id}: vibración ${msg.data.vibration} mm/s — CRÍTICO`, "crit");
-      else if (msg.type === "ALERT_WARNING") addLog(`${msg.data.sensor_id}: promedio ${msg.data.vibration} mm/s — ADVERTENCIA`, "warn");
+    } else if (msg.type === "ALERT_CRITICAL") {
+      sensorState.set(msg.data.sensor_id, msg.data);
+      renderSensorCard(msg.data);
+      addLog(`${msg.data.sensor_id}: ${msg.data.vibration} mm/s — CRÍTICO`, "crit", { sensor: msg.data.sensor_id, trace: "Kafka alerts_critical" });
+      addAudit("DETECCIÓN", msg.data.sensor_id, `CRITICAL ${msg.data.vibration} mm/s`);
+    } else if (msg.type === "ALERT_WARNING") {
+      sensorState.set(msg.data.sensor_id, msg.data);
+      renderSensorCard(msg.data);
+      addLog(`${msg.data.sensor_id}: prom ${msg.data.vibration} mm/s — WARNING`, "warn", { sensor: msg.data.sensor_id, trace: "Kafka alerts_warning" });
+      addAudit("DETECCIÓN", msg.data.sensor_id, `WARNING prom ${msg.data.vibration}`);
     }
     updateStats();
   };
   ws.onclose = () => {
-    el.innerHTML = '<span class="w-2 h-2 rounded-full bg-red-500"></span><span class="text-slate-400">Telemetría: Desconectado</span>';
+    setWsStatus("ws-telemetry-status", false, "Telemetría");
     setTimeout(connectTelemetry, 3000);
   };
   ws.onerror = () => ws.close();
 }
 
-// ═══ WebSocket: Operador (port 8082) ═══════════════════════
 function connectOperator() {
   const ws = new WebSocket(OPERATOR_WS);
-  const el = document.getElementById("ws-operator-status");
   ws.onopen = () => {
-    el.innerHTML = '<span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span><span class="text-green-400">Operador: Conectado</span>';
-    addLog("WebSocket Operador conectado (RabbitMQ)", "info");
+    setWsStatus("ws-operator-status", true, "Operador");
+    addLog("Conexión WebSocket :8082 (RabbitMQ)", "info");
+    addAudit("SISTEMA", "—", "WS operador activo");
   };
   ws.onmessage = (e) => {
     const msg = JSON.parse(e.data);
     if (msg.type === "HUMAN_ALERT") {
       renderAlertCard(msg.data);
       const t = msg.data.type || msg.data.alert_type;
-      const level = t === "CRITICAL" ? "crit" : "warn";
-      addLog(`Decisión requerida: ${sensorLabel(msg.data)} [${t}]`, level);
+      addLog(`Decisión requerida [${t}]`, t === "CRITICAL" ? "crit" : "warn", {
+        sensor: sensorLabel(msg.data),
+        trace: `id=${shortId(msg.data.alert_id)} opciones=[${(msg.data.options||[]).join(", ")}]`,
+      });
+      addAudit("OPERADOR", sensorLabel(msg.data), `${t} · ${shortId(msg.data.alert_id)}`);
     }
   };
   ws.onclose = () => {
-    el.innerHTML = '<span class="w-2 h-2 rounded-full bg-red-500"></span><span class="text-slate-400">Operador: Desconectado</span>';
+    setWsStatus("ws-operator-status", false, "Operador");
     setTimeout(connectOperator, 3000);
   };
   ws.onerror = () => ws.close();
 }
 
-// ═══ Init ══════════════════════════════════════════════════
+// Init audit placeholder
+document.getElementById("audit-trail").innerHTML =
+  '<tr id="no-audit-placeholder"><td colspan="4" class="px-3 py-8 text-center text-slate-600 text-xs">Los eventos del pipeline aparecerán aquí</td></tr>';
+
 connectTelemetry();
 connectOperator();
+updatePendingCount();
 </script>
 </body>
 </html>
