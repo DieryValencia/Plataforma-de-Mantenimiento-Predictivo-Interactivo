@@ -29,6 +29,12 @@ const PUBLISH_INTERVAL_MS = 500;
 const MAINTENANCE_DURATION_MS = Number(process.env.MAINTENANCE_DURATION_MS) || 45000;
 const DELAY_10MIN_MS = Number(process.env.DELAY_10MIN_MS) || 600000;
 const DELAY_24H_MS = Number(process.env.DELAY_24H_MS) || 86400000;
+/** Una sola alerta crítica (>90) en toda la planta por intervalo de simulación (default 5 min) */
+const CRITICAL_INTERVAL_MS = Number(process.env.CRITICAL_INTERVAL_MS) || 5 * 60 * 1000;
+
+let nextCriticalAllowedAt = Date.now() + 15000;
+let warningBurstSensor = null;
+let warningBurstRemaining = 0;
 
 const MODES = {
   ACTIVE: "ACTIVE",
@@ -63,6 +69,41 @@ function toSensorCode(sensorId) {
 
 function randomInt(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+/**
+ * Telemetría controlada (no aleatoria pura):
+ * - Normal: 42–74 mm/s
+ * - Crítica: >90 como máximo 1 vez cada CRITICAL_INTERVAL_MS (planta)
+ * - Advertencia: ráfaga de 3 lecturas 76–78 en el mismo sensor
+ */
+function generateControlledVibration(sensorId) {
+  const now = Date.now();
+
+  if (now >= nextCriticalAllowedAt) {
+    nextCriticalAllowedAt = now + CRITICAL_INTERVAL_MS;
+    warningBurstSensor = null;
+    warningBurstRemaining = 0;
+    const v = randomInt(91, 98);
+    const nextMin = Math.round(CRITICAL_INTERVAL_MS / 60000);
+    console.log(
+      `[sensor_producer] 🔴 Lectura CRÍTICA programada → ${sensorId} ${v} mm/s (próxima en ${nextMin} min)`
+    );
+    return v;
+  }
+
+  if (warningBurstRemaining > 0 && warningBurstSensor === sensorId) {
+    warningBurstRemaining -= 1;
+    return randomInt(76, 78);
+  }
+
+  if (!warningBurstRemaining && Math.random() < 0.04) {
+    warningBurstSensor = sensorId;
+    warningBurstRemaining = 2;
+    return randomInt(76, 78);
+  }
+
+  return randomInt(42, 74);
 }
 
 function initSensorStates() {
@@ -272,7 +313,7 @@ async function publishTelemetryTick() {
 
   const sensorId = active[randomInt(0, active.length - 1)];
   const st = sensorState.get(sensorId);
-  st.lastVibration = randomInt(40, 100);
+  st.lastVibration = generateControlledVibration(sensorId);
 
   const payload = {
     sensor_id: sensorId,
@@ -363,6 +404,9 @@ function startControlServer() {
   for (const id of SENSOR_IDS) {
     await publishStatus(id, "Estado inicial");
   }
+
+  const intervalMin = Math.round(CRITICAL_INTERVAL_MS / 60000);
+  console.log(`[sensor_producer] ⏱️  Ventana crítica: 1 alerta cada ${intervalMin} min de simulación`);
 
   startControlServer();
   startPublishing();

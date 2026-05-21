@@ -82,6 +82,8 @@ services:
       DELAY_10MIN_MS: "600000"
       DELAY_24H_MS: "86400000"
       MAINTENANCE_DURATION_MS: "45000"
+      # 1 alerta crítica en toda la planta cada 5 min (300000 ms). Producción: 28800000 = 8 h
+      CRITICAL_INTERVAL_MS: "300000"
     restart: on-failure
     networks:
       - iot-network
@@ -228,6 +230,9 @@ services:
       HTTP_PORT: "3003"
       NOTIFY_CRITICAL_ONLY: "true"
       NOTIFY_WARNINGS: "false"
+      TELEGRAM_QUEUE_DELAY_MS: "5000"
+      TELEGRAM_MIN_INTERVAL_MS: "3500"
+      MAX_NOTIFY_QUEUE: "25"
     env_file:
       - path: ./notification_service/.env
         required: false

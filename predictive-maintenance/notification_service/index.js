@@ -2,10 +2,9 @@
  * ============================================================
  *  NOTIFICATION SERVICE — Alertas al celular + decisiones móviles
  * ============================================================
- *  - Consume Fanout `human_alerts` (RabbitMQ)
- *  - Telegram: push críticas + botones inline → POST /decide
- *  - Web móvil: GET /m — panel táctil para operador
- *  - Opcional: ntfy.sh push con enlace a /m
+ *  - Cola de envío a Telegram (anti-saturación)
+ *  - Un solo getUpdates en vuelo (evita Conflict de Telegram)
+ *  - Fanout human_alerts → Telegram / ntfy / panel /m
  * ============================================================
  */
 
@@ -31,6 +30,10 @@ const NOTIFY_WARNINGS = process.env.NOTIFY_WARNINGS === "true";
 const NTFY_TOPIC = process.env.NTFY_TOPIC || "";
 const NTFY_SERVER = (process.env.NTFY_SERVER || "https://ntfy.sh").replace(/\/$/, "");
 
+const TELEGRAM_QUEUE_DELAY_MS = Number(process.env.TELEGRAM_QUEUE_DELAY_MS) || 5000;
+const TELEGRAM_MIN_INTERVAL_MS = Number(process.env.TELEGRAM_MIN_INTERVAL_MS) || 3500;
+const MAX_NOTIFY_QUEUE = Number(process.env.MAX_NOTIFY_QUEUE) || 25;
+
 const ACTION_LABELS = {
   APAGADO_INMEDIATO: "⚡ Apagar",
   IGNORAR_10_MINUTOS: "⏭ Ignorar 10m",
@@ -49,15 +52,21 @@ const CODE_TO_ACTION = Object.fromEntries(
   Object.entries(ACTION_CODES).map(([k, v]) => [v, k])
 );
 
-/** @type {Map<string, object>} alert_id → alert */
 const alertsStore = new Map();
-/** @type {Map<string, object>} shortKey → { alert_id, sensor_id, type, options } */
 const callbackStore = new Map();
+const notifyQueue = [];
+const queuedAlertIds = new Set();
 
 let telegramOffset = 0;
+let notifyDraining = false;
+let lastTelegramSentAt = 0;
+let telegramPollRunning = false;
 const MAX_ALERTS_STORE = 40;
 
-// ── Utilidades ─────────────────────────────────────────────
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
 function shortKey() {
   return crypto.randomBytes(4).toString("hex");
 }
@@ -86,6 +95,63 @@ function storeAlert(alert) {
     const first = alertsStore.keys().next().value;
     alertsStore.delete(first);
   }
+}
+
+// ── Cola de notificaciones ─────────────────────────────────
+function enqueueNotification(alert) {
+  if (queuedAlertIds.has(alert.alert_id)) {
+    console.log(`[notification] ⏭️  Duplicado en cola: ${alert.alert_id}`);
+    return;
+  }
+  if (notifyQueue.length >= MAX_NOTIFY_QUEUE) {
+    const dropped = notifyQueue.shift();
+    if (dropped) queuedAlertIds.delete(dropped.alert_id);
+    console.log(`[notification] ⚠️  Cola llena — descartada alerta antigua`);
+  }
+  notifyQueue.push(alert);
+  queuedAlertIds.add(alert.alert_id);
+  console.log(
+    `[notification] 📥 Encolada ${alert.type} sensor ${alert.sensor_id} (cola: ${notifyQueue.length})`
+  );
+  startNotifyDrain();
+}
+
+function startNotifyDrain() {
+  if (!notifyDraining) drainNotificationQueue();
+}
+
+async function drainNotificationQueue() {
+  if (notifyDraining) return;
+  notifyDraining = true;
+
+  while (notifyQueue.length > 0) {
+    const alert = notifyQueue.shift();
+
+    try {
+      const elapsed = Date.now() - lastTelegramSentAt;
+      if (elapsed < TELEGRAM_MIN_INTERVAL_MS) {
+        await sleep(TELEGRAM_MIN_INTERVAL_MS - elapsed);
+      }
+
+      if (TELEGRAM_BOT_TOKEN && TELEGRAM_CHAT_ID) {
+        await sendTelegramAlert(alert);
+        lastTelegramSentAt = Date.now();
+      }
+
+      await sendNtfyPush(alert);
+      console.log(`[notification] ✅ Enviada ${alert.type} → ${alert.sensor_id}`);
+    } catch (err) {
+      console.error(`[notification] ❌ Envío fallido: ${err.message}`);
+    } finally {
+      queuedAlertIds.delete(alert.alert_id);
+    }
+
+    if (notifyQueue.length > 0) {
+      await sleep(TELEGRAM_QUEUE_DELAY_MS);
+    }
+  }
+
+  notifyDraining = false;
 }
 
 // ── Telegram API ───────────────────────────────────────────
@@ -148,8 +214,6 @@ function buildTelegramKeyboard(alert) {
 }
 
 async function sendTelegramAlert(alert) {
-  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
-
   const icon = alert.type === "CRITICAL" ? "🔴" : "🟡";
   const text = [
     `${icon} *${alert.type} — ACCIÓN REQUERIDA*`,
@@ -190,12 +254,9 @@ async function editTelegramMessage(chatId, messageId, text) {
       text,
       parse_mode: "Markdown",
     });
-  } catch (_) {
-    /* mensaje ya editado o expirado */
-  }
+  } catch (_) {}
 }
 
-// ── ntfy push ──────────────────────────────────────────────
 async function sendNtfyPush(alert) {
   if (!NTFY_TOPIC) return;
 
@@ -213,11 +274,8 @@ async function sendNtfyPush(alert) {
     },
     body: `${body}\n\nAbrir: ${url}`,
   });
-
-  console.log(`[notification] 🔔 ntfy → ${title}`);
 }
 
-// ── Ejecutar decisión ──────────────────────────────────────
 async function executeDecision(decision) {
   const res = await fetch(DECIDE_URL, {
     method: "POST",
@@ -235,62 +293,68 @@ async function executeDecision(decision) {
     throw new Error(data.error || `HTTP ${res.status}`);
   }
   alertsStore.delete(decision.alert_id);
+  queuedAlertIds.delete(decision.alert_id);
   return data;
 }
 
-// ── Telegram long-polling (callbacks de botones) ─────────────
-async function pollTelegramUpdates() {
-  if (!TELEGRAM_BOT_TOKEN) return;
+/**
+ * Un único bucle de long-polling. NO usar setInterval: solapa getUpdates
+ * y provoca "Conflict: terminated by other getUpdates request".
+ */
+async function pollTelegramUpdatesLoop() {
+  if (!TELEGRAM_BOT_TOKEN || telegramPollRunning) return;
+  telegramPollRunning = true;
 
-  setInterval(async () => {
+  console.log("[notification] 🔄 Telegram polling iniciado (un solo hilo)");
+
+  while (telegramPollRunning) {
     try {
-      const updates = await telegramApi("getUpdates", {
-        offset: telegramOffset,
-        timeout: 25,
-        allowed_updates: ["callback_query"],
-      });
-      if (!updates?.length) return;
+      const updates = await telegramApi("getUpdates", { offset: telegramOffset });
+      if (updates?.length) {
+        for (const update of updates) {
+          telegramOffset = update.update_id + 1;
+          const cq = update.callback_query;
+          if (!cq?.data?.startsWith("d:")) continue;
 
-      for (const update of updates) {
-        telegramOffset = update.update_id + 1;
-        const cq = update.callback_query;
-        if (!cq?.data?.startsWith("d:")) continue;
+          const [, key, code] = cq.data.split(":");
+          const ctx = callbackStore.get(key);
+          const action = CODE_TO_ACTION[code];
 
-        const [, key, code] = cq.data.split(":");
-        const ctx = callbackStore.get(key);
-        const action = CODE_TO_ACTION[code];
+          if (!ctx || !action) {
+            await answerTelegramCallback(cq.id, "❌ Sesión expirada");
+            continue;
+          }
 
-        if (!ctx || !action) {
-          await answerTelegramCallback(cq.id, "❌ Sesión expirada");
-          continue;
-        }
-
-        try {
-          const result = await executeDecision({
-            ...ctx,
-            chosen_action: action,
-          });
-          callbackStore.delete(key);
-          const label = ACTION_LABELS[action] || action;
-          await answerTelegramCallback(cq.id, `✅ ${label} aplicado`);
-          await editTelegramMessage(
-            cq.message.chat.id,
-            cq.message.message_id,
-            `✅ *Decisión ejecutada*\n\n🏭 Sensor \`${ctx.sensor_id}\`\n🎯 ${label}\n🎛 Modo: \`${result.sensor_mode || "OK"}\`\n🆔 \`${ctx.alert_id}\``
-          );
-          console.log(`[notification] ✅ Telegram decisión: ${action} → ${ctx.sensor_id}`);
-        } catch (err) {
-          await answerTelegramCallback(cq.id, `❌ Error: ${err.message}`);
-          console.error("[notification] ❌ Decisión Telegram:", err.message);
+          try {
+            const result = await executeDecision({ ...ctx, chosen_action: action });
+            callbackStore.delete(key);
+            const label = ACTION_LABELS[action] || action;
+            await answerTelegramCallback(cq.id, `✅ ${label} aplicado`);
+            await editTelegramMessage(
+              cq.message.chat.id,
+              cq.message.message_id,
+              `✅ *Decisión ejecutada*\n\n🏭 Sensor \`${ctx.sensor_id}\`\n🎯 ${label}\n🎛 \`${result.sensor_mode || "OK"}\``
+            );
+          } catch (err) {
+            await answerTelegramCallback(cq.id, `❌ ${err.message}`);
+          }
         }
       }
     } catch (err) {
-      console.error("[notification] ⚠️  Telegram poll:", err.message);
+      const msg = err.message || "";
+      if (msg.includes("Conflict") || msg.includes("terminated by other getUpdates")) {
+        console.error(
+          "[notification] ⚠️  Telegram Conflict: hay otro getUpdates activo (¿varios contenedores o polling duplicado?). Reintento en 5s…"
+        );
+        await sleep(5000);
+      } else {
+        console.error("[notification] ⚠️  Telegram poll:", msg);
+        await sleep(2000);
+      }
     }
-  }, 1000);
+  }
 }
 
-// ── RabbitMQ consumer ──────────────────────────────────────
 async function startRabbitConsumer() {
   const connection = await amqp.connect(RABBITMQ_URL);
   const channel = await connection.createChannel();
@@ -304,18 +368,18 @@ async function startRabbitConsumer() {
   await channel.bindQueue(q.queue, RABBIT_EXCHANGE, "");
 
   console.log(`[notification] 📬 Cola '${q.queue}' ← fanout '${RABBIT_EXCHANGE}'`);
+  console.log(
+    `[notification] ⏱️  Cola Telegram: delay ${TELEGRAM_QUEUE_DELAY_MS}ms | mín ${TELEGRAM_MIN_INTERVAL_MS}ms entre envíos`
+  );
 
-  channel.consume(q.queue, async (msg) => {
+  channel.consume(q.queue, (msg) => {
     if (!msg) return;
     try {
       const alert = JSON.parse(msg.content.toString());
       storeAlert(alert);
 
       if (shouldNotify(alert)) {
-        await Promise.allSettled([
-          sendTelegramAlert(alert),
-          sendNtfyPush(alert),
-        ]);
+        enqueueNotification(alert);
       } else {
         console.log(`[notification] ℹ️  ${alert.type} almacenada (sin push móvil)`);
       }
@@ -327,10 +391,8 @@ async function startRabbitConsumer() {
   });
 }
 
-// ── HTTP: API + web móvil ──────────────────────────────────
 function readStatic(file) {
-  const p = path.join(__dirname, "public", file);
-  return fs.readFileSync(p, "utf8");
+  return fs.readFileSync(path.join(__dirname, "public", file), "utf8");
 }
 
 function parseBody(req) {
@@ -357,6 +419,8 @@ const server = http.createServer(async (req, res) => {
       JSON.stringify({
         status: "healthy",
         telegram: Boolean(TELEGRAM_BOT_TOKEN && TELEGRAM_CHAT_ID),
+        telegram_poll_single: telegramPollRunning,
+        notify_queue_length: notifyQueue.length,
         ntfy: Boolean(NTFY_TOPIC),
         pending_alerts: alertsStore.size,
       })
@@ -376,16 +440,10 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "POST" && url.pathname === "/api/decide") {
     try {
       const body = await parseBody(req);
-      if (!body.chosen_action || !body.sensor_id) {
-        res.writeHead(400, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "chosen_action y sensor_id requeridos" }));
-        return;
-      }
-      const alert = body.alert_id ? alertsStore.get(body.alert_id) : null;
       const result = await executeDecision({
-        alert_id: body.alert_id || alert?.alert_id,
+        alert_id: body.alert_id,
         sensor_id: body.sensor_id,
-        type: body.type || alert?.type || "CRITICAL",
+        type: body.type || "CRITICAL",
         chosen_action: body.chosen_action,
       });
       res.writeHead(200, { "Content-Type": "application/json" });
@@ -407,24 +465,19 @@ const server = http.createServer(async (req, res) => {
   res.end(JSON.stringify({ error: "Not found" }));
 });
 
-// ── Main ───────────────────────────────────────────────────
 (async () => {
   console.log("══════════════════════════════════════════════════════════════");
-  console.log("  NOTIFICATION SERVICE — Móvil (Telegram + Web /m)            ");
+  console.log("  NOTIFICATION SERVICE — Cola + Telegram (un solo poll)        ");
   console.log("══════════════════════════════════════════════════════════════");
 
   if (TELEGRAM_BOT_TOKEN && TELEGRAM_CHAT_ID) {
-    console.log("[notification] 📲 Telegram habilitado");
     try {
       await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/deleteWebhook`);
     } catch (_) {}
-    pollTelegramUpdates();
+    pollTelegramUpdatesLoop();
   } else {
-    console.log("[notification] ⚠️  Telegram deshabilitado (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID)");
+    console.log("[notification] ⚠️  Telegram deshabilitado");
   }
-
-  if (NTFY_TOPIC) console.log(`[notification] 🔔 ntfy topic: ${NTFY_TOPIC}`);
-  console.log(`[notification] 🌐 Panel móvil: ${PUBLIC_BASE_URL}/m`);
 
   await connectWithRetry("RabbitMQ", startRabbitConsumer);
 

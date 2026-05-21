@@ -58,9 +58,9 @@ function toSensorCode(sensorId) {
   return String(sensorId).replace(/^sensor_/i, "").toUpperCase();
 }
 
-/** Genera opciones aleatorias: orden barajado del pool canónico del ejercicio */
-function randomOptions(pool) {
-  return [...pool].sort(() => Math.random() - 0.5);
+/** Opciones fijas del ejercicio (orden estable, sin aleatoriedad) */
+function buildOptions(pool) {
+  return [...pool];
 }
 
 async function setupRabbitMQ() {
@@ -79,7 +79,7 @@ function buildHumanAlertMessage(alertPayload, sourceTopic) {
     alert_id: crypto.randomUUID(),
     sensor_id: alertPayload.sensor_code || toSensorCode(alertPayload.sensor_id),
     type,
-    options: randomOptions(optionsPool),
+    options: buildOptions(optionsPool),
     message: alertPayload.message,
     vibration: alertPayload.vibration ?? alertPayload.avg_vibration,
     source_topic: sourceTopic,

@@ -170,6 +170,30 @@ docker logs -f notification_service
 curl http://localhost:3003/health
 ```
 
+### Cola de notificaciones y error `getUpdates Conflict`
+
+Las alertas críticas se **encolan** antes de enviarse a Telegram (delay configurable, deduplicación por `alert_id`).
+
+El error `Conflict: terminated by other getUpdates request` **no es por cantidad de mensajes**, sino porque **dos clientes llaman `getUpdates` a la vez** con el mismo bot. Causas habituales:
+
+1. **Bug corregido:** antes se usaba `setInterval` cada 1 s mientras el long-poll dura ~25 s → varias peticiones solapadas.
+2. **Dos instancias** del servicio (p. ej. `docker compose` + `node index.js` local con el mismo token).
+3. **Webhook activo** además de polling (se llama `deleteWebhook` al arrancar).
+
+Solución: un solo contenedor `notification_service`, un solo token, reiniciar tras el cambio:
+
+```bash
+docker compose up --build -d notification_service
+```
+
+### Simulación: una crítica cada 8 horas
+
+En `sensor_producer`, la telemetría ya no es aleatoria pura: como máximo **una lectura >90 mm/s cada 8 h** en toda la planta (`CRITICAL_INTERVAL_MS=28800000`). Para pruebas rápidas:
+
+```yaml
+CRITICAL_INTERVAL_MS: "120000"   # 2 minutos en sensor_producer
+```
+
 ---
 
 ## 🚀 Despliegue del Sistema
