@@ -71,11 +71,17 @@ services:
       context: ./sensor_producer
       dockerfile: Dockerfile
     container_name: sensor_producer
+    ports:
+      - "3002:3002"
     depends_on:
       kafka:
         condition: service_healthy
     environment:
       KAFKA_BROKER: kafka:29092
+      CONTROL_PORT: "3002"
+      DELAY_10MIN_MS: "600000"
+      DELAY_24H_MS: "86400000"
+      MAINTENANCE_DURATION_MS: "45000"
     restart: on-failure
     networks:
       - iot-network
@@ -172,9 +178,11 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
+      sensor_producer:
+        condition: service_started
     environment:
       RABBITMQ_URL: amqp://admin:admin123@rabbitmq:5672
-      # Delays según enunciado: 24h y 10min (override para pruebas locales)
+      SENSOR_CONTROL_URL: http://sensor_producer:3002
       DELAY_24H_MS: "86400000"
       DELAY_10MIN_MS: "600000"
     restart: on-failure

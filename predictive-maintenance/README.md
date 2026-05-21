@@ -103,6 +103,7 @@ predictive-maintenance/
 | **8081** | `plant_monitor_backend` | WebSocket Server - Envío de Telemetría |
 | **8082** | `operator_console_backend`| WebSocket Server - Despacho de Decisiones al Operador |
 | **3001** | `action_dispatcher` | HTTP POST - Envío de Decisiones (Remapeado para evitar conflictos con Grafana local) |
+| **3002** | `sensor_producer` | HTTP POST /control - Impacto de decisiones en simulación |
 
 ---
 
@@ -171,8 +172,19 @@ Toma la decisión de **"RECONOCER Y ESPERAR 24H"** (retraso real de 24 h, `86400
 docker logs -f maintenance_worker
 ```
 
-> Para pruebas locales más rápidas, puedes sobreescribir en `docker-compose.yml`:
-> `DELAY_24H_MS: "15000"` y `DELAY_10MIN_MS: "15000"` en el servicio `action_dispatcher`.
+> Para pruebas locales más rápidas (barra CD / reactivación), sobreescribe en `docker-compose.yml`
+> `DELAY_10MIN_MS` y `DELAY_24H_MS` en **sensor_producer** y **action_dispatcher** (ej. `"30000"` = 30 s).
+
+### Impacto real de decisiones del operador
+
+Tras `POST /decide`, `action_dispatcher` notifica a `sensor_producer` (`POST /control`):
+
+| Decisión | Efecto en simulación |
+| :--- | :--- |
+| **APAGADO_INMEDIATO** | Sensor `SHUTDOWN` — deja de publicar en `sensor_data` |
+| **IGNORAR_10_MINUTOS** | Sensor `COOLDOWN` — barra CD en dashboard, reactivación automática |
+| **RECONOCER_Y_ESPERAR_24H** | `COOLDOWN` prolongado (24 h por defecto) |
+| **PROGRAMAR_MANTENIMIENTO_AHORA** | `MAINTENANCE` ~45 s sin lecturas, luego vuelve a `OK` |
 
 ---
 

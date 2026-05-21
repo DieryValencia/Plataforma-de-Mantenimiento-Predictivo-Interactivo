@@ -34,6 +34,7 @@ const RK_IGNORE_DELAYED = "ignore_delayed";
 
 const DELAY_24H_MS = Number(process.env.DELAY_24H_MS) || 86400000;
 const DELAY_10MIN_MS = Number(process.env.DELAY_10MIN_MS) || 600000;
+const SENSOR_CONTROL_URL = process.env.SENSOR_CONTROL_URL || "http://localhost:3002";
 
 let rabbitChannel = null;
 
@@ -99,6 +100,36 @@ function setCors(res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+}
+
+async function applySensorControl(decision) {
+  const body = {
+    sensor_id: decision.sensor_id,
+    chosen_action: decision.chosen_action,
+  };
+  if (decision.chosen_action === "IGNORAR_10_MINUTOS") body.duration_ms = DELAY_10MIN_MS;
+  if (decision.chosen_action === "RECONOCER_Y_ESPERAR_24H") body.duration_ms = DELAY_24H_MS;
+
+  try {
+    const res = await fetch(`${SENSOR_CONTROL_URL}/control`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (data.status !== "ACK") {
+      console.warn("[action_dispatcher] ⚠️  Control sensor NACK:", data.error);
+    } else {
+      console.log(
+        `[action_dispatcher] 🎛️  Sensor ${data.sensor_id} → modo ${data.mode}` +
+          (data.duration_ms ? ` (${data.duration_ms}ms)` : "")
+      );
+    }
+    return data;
+  } catch (err) {
+    console.error("[action_dispatcher] ❌ Control sensor falló:", err.message);
+    return { status: "NACK", error: err.message };
+  }
 }
 
 function routeDecision(decision) {
@@ -186,6 +217,11 @@ const server = http.createServer(async (req, res) => {
       }
 
       const result = routeDecision(body);
+      if (result.status === "ACK") {
+        const sensorResult = await applySensorControl(body);
+        if (sensorResult.mode) result.sensor_mode = sensorResult.mode;
+        if (sensorResult.duration_ms) result.sensor_duration_ms = sensorResult.duration_ms;
+      }
       const statusCode = result.status === "ACK" ? 200 : 400;
 
       res.writeHead(statusCode, { "Content-Type": "application/json" });

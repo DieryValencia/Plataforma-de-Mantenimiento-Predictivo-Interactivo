@@ -29,6 +29,7 @@ const kafka = new Kafka({
 
 const consumer = kafka.consumer({ groupId: "plant-monitor-group" });
 const plantState = new Map();
+const OPERATOR_CONTROL_STATUSES = new Set(["SHUTDOWN", "COOLDOWN", "MAINTENANCE"]);
 
 const wss = new WebSocketServer({ port: WS_PORT });
 
@@ -79,6 +80,11 @@ function processMessage(topic, payload) {
       status: payload.status,
       unit: payload.unit || "mm/s",
       timestamp: payload.timestamp,
+      control_mode: payload.control_mode,
+      last_action: payload.last_action,
+      message: payload.message,
+      cooldown_remaining_ms: payload.cooldown_remaining_ms,
+      cooldown_pct: payload.cooldown_pct,
     });
 
     broadcast({
@@ -86,6 +92,8 @@ function processMessage(topic, payload) {
       data: plantState.get(sensorKey),
     });
   } else if (topic === TOPIC_ALERTS_CRITICAL) {
+    const current = plantState.get(sensorKey);
+    if (current && OPERATOR_CONTROL_STATUSES.has(current.status)) return;
     plantState.set(sensorKey, {
       sensor_id: displayId,
       sensor_code: payload.sensor_code || payload.sensor_id,
@@ -101,6 +109,8 @@ function processMessage(topic, payload) {
       data: plantState.get(sensorKey),
     });
   } else if (topic === TOPIC_ALERTS_WARNING) {
+    const current = plantState.get(sensorKey);
+    if (current && OPERATOR_CONTROL_STATUSES.has(current.status)) return;
     plantState.set(sensorKey, {
       sensor_id: displayId,
       sensor_code: payload.sensor_code || payload.sensor_id,
