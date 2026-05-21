@@ -71,6 +71,7 @@ async function connectWithRetry(label, connectFn, delayMs = 4000) {
 async function ensureTopics() {
   const topics = [
     { topic: TOPIC_SENSOR_DATA, numPartitions: 3, replicationFactor: 1 },
+    { topic: "sensor_status", numPartitions: 3, replicationFactor: 1 },
     { topic: TOPIC_ALERTS_CRITICAL, numPartitions: 3, replicationFactor: 1 },
     { topic: TOPIC_ALERTS_WARNING, numPartitions: 3, replicationFactor: 1 },
   ];

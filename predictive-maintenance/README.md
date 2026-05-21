@@ -16,7 +16,8 @@ graph TD
         AD -->|alerts_critical| K_AC[(Tópico: alerts_critical)]
         AD -->|alerts_warning| K_AW[(Tópico: alerts_warning)]
         
-        K_SD --> PM[plant_monitor_backend :8081]
+        AD -->|sensor_status| K_SS[(Tópico: sensor_status)]
+        K_SS --> PM[plant_monitor_backend :8081]
         K_AC --> PM
         K_AW --> PM
     end
@@ -30,8 +31,9 @@ graph TD
         
         DASH[dashboard.html] -->|fetch POST /decide| DISP[action_dispatcher :3001]
         
-        DISP -->|critical_actions_queue| AW[actuator_worker]
-        DISP -->|delayed_exchange x-delayed-message| MW[maintenance_worker]
+        DISP -->|actions_direct [critical]| AW[actuator_worker]
+        DISP -->|actions_direct [maintenance]| MW[maintenance_worker]
+        DISP -->|delayed_exchange 24h / 10min| MW
     end
 
     subgraph Interfaz de Usuario
@@ -164,10 +166,31 @@ docker logs -f actuator_worker
 ```
 
 ### 5. Ejecución Diferida mediante RabbitMQ (Mantenimiento)
-Toma la decisión de **"RECONOCER Y ESPERAR 24H"** (simulados en 15 segundos reales) en una advertencia y verifica en consola cómo se retiene en el exchange diferido de RabbitMQ y se libera automáticamente en el worker de mantenimiento pasados exactamente los 15 segundos:
+Toma la decisión de **"RECONOCER Y ESPERAR 24H"** (retraso real de 24 h, `86400000` ms) o **"IGNORAR 10 MINUTOS"** (retraso de 10 min, `600000` ms) y verifica en el worker de mantenimiento cuando el mensaje se libera del Delayed Exchange:
 ```bash
 docker logs -f maintenance_worker
 ```
+
+> Para pruebas locales más rápidas, puedes sobreescribir en `docker-compose.yml`:
+> `DELAY_24H_MS: "15000"` y `DELAY_10MIN_MS: "15000"` en el servicio `action_dispatcher`.
+
+---
+
+## ✅ Cumplimiento del Enunciado (Ejercicio 3)
+
+| Requisito | Estado |
+| :--- | :--- |
+| Arquitectura híbrida Kafka + RabbitMQ | ✅ |
+| 8 microservicios + brokers en Docker Compose | ✅ |
+| Ventana móvil stateful + reglas >90 / 3×>75 | ✅ |
+| Particionamiento por `sensor_id` (key) | ✅ |
+| Tópico `sensor_status` consumido por `plant_monitor_backend` | ✅ |
+| Fanout `human_alerts` + opciones aleatorias (orden barajado) | ✅ |
+| Mensaje RabbitMQ: `{ alert_id, sensor_id, type, options }` | ✅ |
+| Exchange Direct `actions_direct` para comandos | ✅ |
+| Delayed Exchange: 24 h y 10 min (`x-delay`) | ✅ |
+| `POST /decide` en `action_dispatcher` | ✅ |
+| Dashboard: WS :8081 + :8082 + decisión al dispatcher | ✅ |
 
 ---
 

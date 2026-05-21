@@ -132,6 +132,8 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
+      alert_detector:
+        condition: service_started
     environment:
       KAFKA_BROKER: kafka:29092
     restart: on-failure
@@ -172,6 +174,9 @@ services:
         condition: service_healthy
     environment:
       RABBITMQ_URL: amqp://admin:admin123@rabbitmq:5672
+      # Delays según enunciado: 24h y 10min (override para pruebas locales)
+      DELAY_24H_MS: "86400000"
+      DELAY_10MIN_MS: "600000"
     restart: on-failure
     networks:
       - iot-network

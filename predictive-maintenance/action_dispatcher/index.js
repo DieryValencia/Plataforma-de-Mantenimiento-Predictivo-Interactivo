@@ -3,13 +3,13 @@
  *  ACTION DISPATCHER — REST API + Inyección a RabbitMQ
  * ============================================================
  *  Servidor HTTP (:3000) con endpoint POST /decide.
- *  Recibe decisiones humanas del frontend y las enruta a las
- *  colas apropiadas de RabbitMQ:
+ *  Enruta decisiones humanas vía Exchange Direct `actions_direct`
+ *  y Delayed Exchange para tareas diferidas:
  *
- *   - APAGADO_INMEDIATO         → critical_actions_queue (directo)
- *   - PROGRAMAR_MANTENIMIENTO   → maintenance_queue (directo)
- *   - RECONOCER_Y_ESPERAR_24H   → delayed_exchange (15s delay)
- *   - IGNORAR_10_MINUTOS        → log y descarte
+ *   - APAGADO_INMEDIATO              → actions_direct / critical
+ *   - PROGRAMAR_MANTENIMIENTO_AHORA  → actions_direct / maintenance
+ *   - RECONOCER_Y_ESPERAR_24H        → delayed_exchange (24h)
+ *   - IGNORAR_10_MINUTOS             → delayed_exchange (10 min)
  * ============================================================
  */
 
@@ -18,17 +18,25 @@
 const http = require("http");
 const amqp = require("amqplib");
 
-// ── Configuración ──────────────────────────────────────────
 const RABBITMQ_URL = process.env.RABBITMQ_URL || "amqp://admin:admin123@localhost:5672";
 const HTTP_PORT = 3000;
+
+const ACTIONS_DIRECT = "actions_direct";
+const RK_CRITICAL = "critical";
+const RK_MAINTENANCE = "maintenance";
+
 const CRITICAL_QUEUE = "critical_actions_queue";
 const MAINTENANCE_QUEUE = "maintenance_queue";
-const DELAYED_EXCHANGE = "delayed_exchange";
 
-// ── Estado RabbitMQ ────────────────────────────────────────
+const DELAYED_EXCHANGE = "delayed_exchange";
+const RK_MAINTENANCE_DELAYED = "maintenance_delayed";
+const RK_IGNORE_DELAYED = "ignore_delayed";
+
+const DELAY_24H_MS = Number(process.env.DELAY_24H_MS) || 86400000;
+const DELAY_10MIN_MS = Number(process.env.DELAY_10MIN_MS) || 600000;
+
 let rabbitChannel = null;
 
-// ── Reintento resiliente ───────────────────────────────────
 async function connectWithRetry(label, connectFn, delayMs = 4000) {
   let connected = false;
   while (!connected) {
@@ -43,31 +51,35 @@ async function connectWithRetry(label, connectFn, delayMs = 4000) {
   }
 }
 
-// ── Configuración RabbitMQ ─────────────────────────────────
 async function setupRabbitMQ() {
   const connection = await amqp.connect(RABBITMQ_URL);
   rabbitChannel = await connection.createChannel();
 
-  // Declarar colas durables
+  await rabbitChannel.assertExchange(ACTIONS_DIRECT, "direct", { durable: true });
+  console.log(`[action_dispatcher] 📢 Exchange Direct '${ACTIONS_DIRECT}' declarado.`);
+
   await rabbitChannel.assertQueue(CRITICAL_QUEUE, { durable: true });
-  console.log(`[action_dispatcher] 📦 Cola '${CRITICAL_QUEUE}' declarada.`);
+  await rabbitChannel.bindQueue(CRITICAL_QUEUE, ACTIONS_DIRECT, RK_CRITICAL);
+  console.log(`[action_dispatcher] 🔗 '${CRITICAL_QUEUE}' ← ${ACTIONS_DIRECT} [${RK_CRITICAL}]`);
 
   await rabbitChannel.assertQueue(MAINTENANCE_QUEUE, { durable: true });
-  console.log(`[action_dispatcher] 📦 Cola '${MAINTENANCE_QUEUE}' declarada.`);
+  await rabbitChannel.bindQueue(MAINTENANCE_QUEUE, ACTIONS_DIRECT, RK_MAINTENANCE);
+  console.log(`[action_dispatcher] 🔗 '${MAINTENANCE_QUEUE}' ← ${ACTIONS_DIRECT} [${RK_MAINTENANCE}]`);
 
-  // Declarar Delayed Exchange (plugin rabbitmq_delayed_message_exchange)
   await rabbitChannel.assertExchange(DELAYED_EXCHANGE, "x-delayed-message", {
     durable: true,
     arguments: { "x-delayed-type": "direct" },
   });
   console.log(`[action_dispatcher] ⏰ Delayed Exchange '${DELAYED_EXCHANGE}' declarado.`);
 
-  // Vincular la cola de mantenimiento al delayed exchange
-  await rabbitChannel.bindQueue(MAINTENANCE_QUEUE, DELAYED_EXCHANGE, "maintenance_delayed");
-  console.log(`[action_dispatcher] 🔗 '${MAINTENANCE_QUEUE}' vinculada a '${DELAYED_EXCHANGE}'`);
+  await rabbitChannel.bindQueue(MAINTENANCE_QUEUE, DELAYED_EXCHANGE, RK_MAINTENANCE_DELAYED);
+  await rabbitChannel.bindQueue(MAINTENANCE_QUEUE, DELAYED_EXCHANGE, RK_IGNORE_DELAYED);
+  console.log(
+    `[action_dispatcher] 🔗 '${MAINTENANCE_QUEUE}' ← ${DELAYED_EXCHANGE} [${RK_MAINTENANCE_DELAYED}, ${RK_IGNORE_DELAYED}]`
+  );
+  console.log(`[action_dispatcher] ⏱️  Delays: 24h=${DELAY_24H_MS}ms | 10min=${DELAY_10MIN_MS}ms`);
 }
 
-// ── Parsear cuerpo HTTP ────────────────────────────────────
 function parseBody(req) {
   return new Promise((resolve, reject) => {
     let data = "";
@@ -83,43 +95,70 @@ function parseBody(req) {
   });
 }
 
-// ── Headers CORS ───────────────────────────────────────────
 function setCors(res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 }
 
-// ── Ruteo de Decisión ──────────────────────────────────────
 function routeDecision(decision) {
-  const { chosen_action, sensor_id, alert_type } = decision;
-  const payload = Buffer.from(JSON.stringify({
-    ...decision,
-    dispatched_at: new Date().toISOString(),
-  }));
+  const { chosen_action, sensor_id, alert_id, type } = decision;
+  const payload = Buffer.from(
+    JSON.stringify({
+      ...decision,
+      alert_type: type || decision.alert_type,
+      dispatched_at: new Date().toISOString(),
+    })
+  );
+
+  const opts = { persistent: true, contentType: "application/json" };
 
   switch (chosen_action) {
     case "APAGADO_INMEDIATO":
-      rabbitChannel.sendToQueue(CRITICAL_QUEUE, payload, { persistent: true });
-      console.log(`[action_dispatcher] 🔴 APAGADO_INMEDIATO → ${CRITICAL_QUEUE} | sensor: ${sensor_id}`);
-      return { status: "ACK", queue: CRITICAL_QUEUE, action: chosen_action };
+      rabbitChannel.publish(ACTIONS_DIRECT, RK_CRITICAL, payload, opts);
+      console.log(
+        `[action_dispatcher] 🔴 APAGADO_INMEDIATO → ${ACTIONS_DIRECT}/${RK_CRITICAL} | sensor: ${sensor_id} | alert: ${alert_id}`
+      );
+      return { status: "ACK", exchange: ACTIONS_DIRECT, routing_key: RK_CRITICAL, action: chosen_action };
 
     case "PROGRAMAR_MANTENIMIENTO_AHORA":
-      rabbitChannel.sendToQueue(MAINTENANCE_QUEUE, payload, { persistent: true });
-      console.log(`[action_dispatcher] 🔧 PROGRAMAR_MANTENIMIENTO → ${MAINTENANCE_QUEUE} | sensor: ${sensor_id}`);
-      return { status: "ACK", queue: MAINTENANCE_QUEUE, action: chosen_action };
+      rabbitChannel.publish(ACTIONS_DIRECT, RK_MAINTENANCE, payload, opts);
+      console.log(
+        `[action_dispatcher] 🔧 PROGRAMAR_MANTENIMIENTO → ${ACTIONS_DIRECT}/${RK_MAINTENANCE} | sensor: ${sensor_id}`
+      );
+      return { status: "ACK", exchange: ACTIONS_DIRECT, routing_key: RK_MAINTENANCE, action: chosen_action };
 
     case "RECONOCER_Y_ESPERAR_24H":
-      rabbitChannel.publish(DELAYED_EXCHANGE, "maintenance_delayed", payload, {
-        persistent: true,
-        headers: { "x-delay": 15000 }, // 15 seg (simulación de 24h)
+      rabbitChannel.publish(DELAYED_EXCHANGE, RK_MAINTENANCE_DELAYED, payload, {
+        ...opts,
+        headers: { "x-delay": DELAY_24H_MS },
       });
-      console.log(`[action_dispatcher] ⏰ ESPERAR_24H → ${DELAYED_EXCHANGE} (15s delay) | sensor: ${sensor_id}`);
-      return { status: "ACK", queue: DELAYED_EXCHANGE, action: chosen_action, delay: "15s (simulated 24h)" };
+      console.log(
+        `[action_dispatcher] ⏰ ESPERAR_24H → ${DELAYED_EXCHANGE} (${DELAY_24H_MS}ms) | sensor: ${sensor_id}`
+      );
+      return {
+        status: "ACK",
+        exchange: DELAYED_EXCHANGE,
+        routing_key: RK_MAINTENANCE_DELAYED,
+        action: chosen_action,
+        delay_ms: DELAY_24H_MS,
+      };
 
     case "IGNORAR_10_MINUTOS":
-      console.log(`[action_dispatcher] ⏭️  IGNORAR_10_MIN → descartado | sensor: ${sensor_id}`);
-      return { status: "ACK", action: chosen_action, note: "Alerta ignorada por 10 minutos" };
+      rabbitChannel.publish(DELAYED_EXCHANGE, RK_IGNORE_DELAYED, payload, {
+        ...opts,
+        headers: { "x-delay": DELAY_10MIN_MS },
+      });
+      console.log(
+        `[action_dispatcher] ⏭️  IGNORAR_10_MIN → ${DELAYED_EXCHANGE} (${DELAY_10MIN_MS}ms) | sensor: ${sensor_id}`
+      );
+      return {
+        status: "ACK",
+        exchange: DELAYED_EXCHANGE,
+        routing_key: RK_IGNORE_DELAYED,
+        action: chosen_action,
+        delay_ms: DELAY_10MIN_MS,
+      };
 
     default:
       console.warn(`[action_dispatcher] ⚠️  Acción desconocida: ${chosen_action}`);
@@ -127,18 +166,15 @@ function routeDecision(decision) {
   }
 }
 
-// ── Servidor HTTP ──────────────────────────────────────────
 const server = http.createServer(async (req, res) => {
   setCors(res);
 
-  // Preflight CORS
   if (req.method === "OPTIONS") {
     res.writeHead(204);
     res.end();
     return;
   }
 
-  // POST /decide
   if (req.method === "POST" && req.url === "/decide") {
     try {
       const body = await parseBody(req);
@@ -161,19 +197,16 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // Healthcheck
   if (req.method === "GET" && req.url === "/health") {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ status: "healthy", timestamp: new Date().toISOString() }));
     return;
   }
 
-  // 404
   res.writeHead(404, { "Content-Type": "application/json" });
   res.end(JSON.stringify({ error: "Not found" }));
 });
 
-// ── Main ───────────────────────────────────────────────────
 (async () => {
   console.log("══════════════════════════════════════════════════════════════");
   console.log("  ACTION DISPATCHER — REST API :3000 + RabbitMQ Router       ");

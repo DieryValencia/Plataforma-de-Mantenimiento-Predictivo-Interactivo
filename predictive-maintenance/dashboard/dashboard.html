@@ -151,28 +151,39 @@ function addLog(msg, type) {
   while (log.children.length > 80) log.removeChild(log.lastChild);
 }
 
+function sensorLabel(alert) {
+  const sid = alert.sensor_id;
+  if (!sid) return "Sensor desconocido";
+  if (String(sid).length <= 2) return `Sensor ${sid}`;
+  return sid;
+}
+
 // ── Alert Card ─────────────────────────────────────────────
 function renderAlertCard(alert) {
-  const id = "alert-" + (++alertCounter);
-  pendingAlerts.set(id, alert);
+  const cardDomId = "alert-" + (++alertCounter);
+  const alertType = alert.type || alert.alert_type;
+  const alertId = alert.alert_id || cardDomId;
+  pendingAlerts.set(cardDomId, { ...alert, alert_id: alertId, alert_type: alertType });
   document.getElementById("no-alerts-msg")?.remove();
   const panel = document.getElementById("alerts-panel");
-  const isCrit = alert.alert_type === "CRITICAL";
+  const isCrit = alertType === "CRITICAL";
   const card = document.createElement("div");
-  card.id = id;
+  card.id = cardDomId;
   card.className = `rounded-xl p-4 border slide-in ${isCrit ? "bg-red-950/40 border-red-700/50 pulse-critical" : "bg-yellow-950/30 border-yellow-700/40"}`;
   const btns = (alert.options || []).map(opt => {
     const style = opt.includes("APAGADO") ? "bg-red-600 hover:bg-red-500" :
                   opt.includes("PROGRAMAR") ? "bg-blue-600 hover:bg-blue-500" :
                   opt.includes("RECONOCER") ? "bg-yellow-600 hover:bg-yellow-500" :
                   "bg-slate-600 hover:bg-slate-500";
-    return `<button onclick="handleDecision('${id}','${opt}','${alert.sensor_id}','${alert.alert_type}')" class="${style} text-white text-xs font-semibold px-4 py-2 rounded-lg transition-all duration-200 hover:scale-105 active:scale-95">${opt.replace(/_/g," ")}</button>`;
+    const safeOpt = opt.replace(/'/g, "\\'");
+    return `<button onclick="handleDecision('${cardDomId}','${safeOpt}')" class="${style} text-white text-xs font-semibold px-4 py-2 rounded-lg transition-all duration-200 hover:scale-105 active:scale-95">${opt.replace(/_/g," ")}</button>`;
   }).join("");
   card.innerHTML = `
     <div class="flex items-start justify-between mb-3">
       <div>
-        <span class="text-sm font-bold ${isCrit ? "text-red-400" : "text-yellow-400"}">${isCrit ? "🔴 CRÍTICO" : "🟡 ADVERTENCIA"} — ${alert.sensor_id}</span>
+        <span class="text-sm font-bold ${isCrit ? "text-red-400" : "text-yellow-400"}">${isCrit ? "🔴 CRÍTICO" : "🟡 ADVERTENCIA"} — ${sensorLabel(alert)}</span>
         <p class="text-xs text-slate-400 mt-1">${alert.message || "Alerta detectada"}</p>
+        <p class="text-[10px] text-slate-500 font-mono mt-1">ID: ${alertId}</p>
       </div>
       <span class="text-[10px] text-slate-500 font-mono">${new Date().toLocaleTimeString("es-CO")}</span>
     </div>
@@ -181,23 +192,33 @@ function renderAlertCard(alert) {
 }
 
 // ── Handle Decision ────────────────────────────────────────
-async function handleDecision(cardId, action, sensorId, alertType) {
+async function handleDecision(cardId, action) {
+  const alert = pendingAlerts.get(cardId);
+  if (!alert) return;
   const card = document.getElementById(cardId);
+  const sensorId = alert.sensor_id;
+  const alertType = alert.type || alert.alert_type;
   card.querySelectorAll("button").forEach(b => { b.disabled = true; b.classList.add("opacity-50"); });
   try {
     const res = await fetch(DECIDE_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chosen_action: action, sensor_id: sensorId, alert_type: alertType }),
+      body: JSON.stringify({
+        alert_id: alert.alert_id,
+        chosen_action: action,
+        sensor_id: sensorId,
+        type: alertType,
+        alert_type: alertType,
+      }),
     });
     const data = await res.json();
     if (data.status === "ACK") {
       card.classList.add("fade-out");
       setTimeout(() => { card.remove(); pendingAlerts.delete(cardId); checkEmptyAlerts(); }, 300);
-      addLog(`${sensorId}: ${action.replace(/_/g," ")} — ACK`, "ok");
-      addResolved(sensorId, action, alertType);
+      addLog(`${sensorLabel(alert)}: ${action.replace(/_/g," ")} — ACK`, "ok");
+      addResolved(sensorLabel(alert), action, alertType);
     } else {
-      addLog(`${sensorId}: Error — ${data.error}`, "crit");
+      addLog(`${sensorLabel(alert)}: Error — ${data.error}`, "crit");
     }
   } catch (err) {
     addLog(`Error de red: ${err.message}`, "crit");
@@ -261,8 +282,9 @@ function connectOperator() {
     const msg = JSON.parse(e.data);
     if (msg.type === "HUMAN_ALERT") {
       renderAlertCard(msg.data);
-      const level = msg.data.alert_type === "CRITICAL" ? "crit" : "warn";
-      addLog(`Decisión requerida: ${msg.data.sensor_id} [${msg.data.alert_type}]`, level);
+      const t = msg.data.type || msg.data.alert_type;
+      const level = t === "CRITICAL" ? "crit" : "warn";
+      addLog(`Decisión requerida: ${sensorLabel(msg.data)} [${t}]`, level);
     }
   };
   ws.onclose = () => {
