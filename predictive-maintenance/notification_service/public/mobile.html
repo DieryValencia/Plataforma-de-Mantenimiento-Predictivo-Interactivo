@@ -1,12 +1,14 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
+  <!-- Pagina liviana para celular: muestra alertas pendientes y permite decidir rapido. -->
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="theme-color" content="#0f172a">
   <title>Operador IoT — Decisiones</title>
   <style>
+    /* Estilos compactos y tactiles para operar desde pantalla pequena. */
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
     body { background: #0f172a; color: #e2e8f0; min-height: 100dvh; padding: 12px; padding-bottom: 80px; }
     header { text-align: center; padding: 16px 0 20px; border-bottom: 1px solid #334155; margin-bottom: 16px; }
@@ -51,12 +53,15 @@
   <div class="refresh">Actualización automática cada 3s</div>
 
 <script>
+// Endpoints relativos al mismo notification_service que sirve esta pagina.
 const API = window.location.origin;
 const DECIDE_API = API + "/api/decide";
 const ALERTS_API = API + "/api/alerts/pending";
 const params = new URLSearchParams(location.search);
+// Permite abrir la pagina enfocando una alerta concreta desde Telegram/ntfy.
 const focusAlert = params.get("alert");
 
+// Mapa entre acciones internas y estilo visual del boton.
 const BTN_CLASS = {
   APAGADO_INMEDIATO: "btn-off",
   IGNORAR_10_MINUTOS: "btn-ign",
@@ -64,10 +69,12 @@ const BTN_CLASS = {
   RECONOCER_Y_ESPERAR_24H: "btn-wait",
 };
 
+// Convierte nombres internos con guion bajo en texto legible.
 function label(action) {
   return action.replace(/_/g, " ");
 }
 
+// Muestra resultado de una accion como toast temporal.
 function showToast(msg, ok) {
   const t = document.getElementById("toast");
   t.textContent = msg;
@@ -75,6 +82,7 @@ function showToast(msg, ok) {
   setTimeout(() => { t.className = "toast"; }, 4000);
 }
 
+// Envia la decision al backend movil; deshabilita el boton para evitar doble click.
 async function decide(alert, action, btn) {
   btn.disabled = true;
   try {
@@ -102,6 +110,7 @@ async function decide(alert, action, btn) {
   }
 }
 
+// Construye una tarjeta de alerta con sus botones de accion disponibles.
 function renderCard(alert) {
   const isCrit = alert.type === "CRITICAL";
   const div = document.createElement("div");
@@ -123,6 +132,7 @@ function renderCard(alert) {
   return div;
 }
 
+// Consulta alertas pendientes, refresca la lista y prioriza la alerta indicada por querystring.
 async function loadAlerts() {
   const list = document.getElementById("list");
   try {
@@ -153,6 +163,7 @@ async function loadAlerts() {
   }
 }
 
+// Carga inicial y refresco automatico para que el operador vea cambios sin recargar.
 loadAlerts();
 setInterval(loadAlerts, 3000);
 </script>

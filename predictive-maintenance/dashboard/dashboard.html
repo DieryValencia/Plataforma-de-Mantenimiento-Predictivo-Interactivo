@@ -1,13 +1,16 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
+  <!-- Metadatos base del dashboard: idioma, responsive y descripcion para navegador. -->
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>IoT Predictive Maintenance — Centro de Operaciones</title>
   <meta name="description" content="Dashboard de mantenimiento predictivo IoT con Kafka y RabbitMQ">
+  <!-- Tailwind y fuentes externas usadas para maquetacion rapida y estilo industrial. -->
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <style>
+    /* Variables y estilos reutilizables para el tema oscuro, paneles, estados y animaciones. */
     :root {
       --bg: #070b14;
       --panel: rgba(15, 23, 42, 0.72);
@@ -229,10 +232,12 @@
   </main>
 
 <script>
+// Endpoints locales de los servicios que alimentan el dashboard.
 const TELEMETRY_WS = "ws://localhost:8081";
 const OPERATOR_WS  = "ws://localhost:8082";
 const DECIDE_URL   = "http://localhost:3001/decide";
 
+// Estado del navegador: sensores, alertas pendientes, bitacora y cola visual de alertas.
 const sensorState = new Map();
 const sensorModeTrace = new Map();
 const pendingAlerts = new Map();
@@ -245,9 +250,11 @@ let seqId = 0;
 let alertQueueDrainTimer = null;
 let isAlertQueueDraining = false;
 
+// Limites de UI para evitar que registros y colas crezcan sin control visual.
 const MAX_LOG_ENTRIES = 20;
 const ALERT_QUEUE_DELAY_MS = 3500; // intervalo entre notificaciones visibles
 
+// Clases Tailwind por etapa de trazabilidad; definen los badges de la tabla.
 const STAGE_STYLES = {
   TELEMETRÍA: "bg-cyan-500/15 text-cyan-300 border-cyan-500/30",
   DETECCIÓN: "bg-orange-500/15 text-orange-300 border-orange-500/30",
@@ -262,19 +269,23 @@ const STAGE_STYLES = {
 function nowTime() {
   return new Date().toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
+// Fecha/hora completa para reloj, auditoria y textos informativos.
 function nowFull() {
   return new Date().toLocaleString("es-CO");
 }
+// Acorta ids largos para que la interfaz siga legible.
 function shortId(id) {
   if (!id) return "—";
   return id.length > 12 ? id.slice(0, 8) + "…" : id;
 }
+// Convierte datos de alerta en una etiqueta humana de sensor.
 function sensorLabel(alert) {
   const sid = alert?.sensor_id;
   if (!sid) return "—";
   if (String(sid).length <= 2) return `Sensor ${sid}`;
   return sid;
 }
+// Copia texto al portapapeles y da feedback temporal al boton.
 function copyText(text, btn) {
   navigator.clipboard.writeText(text).then(() => {
     const orig = btn.textContent;
@@ -282,10 +293,12 @@ function copyText(text, btn) {
     setTimeout(() => { btn.textContent = orig; }, 1200);
   });
 }
+// Sincroniza el contador superior de alertas pendientes.
 function updatePendingCount() {
   document.getElementById("pending-count").textContent = pendingAlerts.size;
 }
 
+// Reloj del header; no depende del backend.
 setInterval(() => {
   document.getElementById("clock").textContent = nowFull();
 }, 1000);
@@ -307,6 +320,7 @@ function addAudit(stage, sensor, detail, meta = {}) {
 }
 
 // ── Stats ──────────────────────────────────────────────────
+// Recalcula tarjetas resumen a partir del estado actual de todos los sensores.
 function updateStats() {
   const values = Array.from(sensorState.values());
   document.getElementById("stat-total").textContent = values.length;
@@ -316,6 +330,7 @@ function updateStats() {
   document.getElementById("stat-decisions").textContent = decisionCount;
 }
 
+// Convierte milisegundos en texto corto para cooldowns o mantenimiento.
 function formatMs(ms) {
   if (!ms || ms <= 0) return "0s";
   const s = Math.ceil(ms / 1000);
@@ -328,6 +343,7 @@ function formatMs(ms) {
 }
 
 // ── Sensor cards ───────────────────────────────────────────
+// Crea o actualiza la tarjeta visual de un sensor concreto.
 function renderSensorCard(sensor) {
   const grid = document.getElementById("sensor-grid");
   let card = document.getElementById("card-" + sensor.sensor_id);
@@ -396,6 +412,7 @@ function renderSensorCard(sensor) {
     <p class="text-[9px] text-slate-600 mt-2 mono">↻ ${ts}${sensor.last_action ? " · " + sensor.last_action.replace(/_/g," ") : ""}</p>`;
 }
 
+// Detecta cambios de modo/estado para registrar eventos solo cuando algo cambio.
 function logSensorModeChange(sensor) {
   const key = sensor.sensor_id;
   const prev = sensorModeTrace.get(key);
@@ -421,6 +438,7 @@ function logSensorModeChange(sensor) {
 }
 
 // ── Activity log por categoría (máx. 20, scroll) ───────────
+// Configuracion visual de categorias usadas por el registro de eventos.
 const LOG_CATEGORIES = {
   system: { label: "SYS", border: "border-l-slate-500/60", bg: "bg-slate-900/40", icon: "⚙️" },
   telemetry: { label: "TLM", border: "border-l-cyan-500/60", bg: "bg-cyan-950/20", icon: "📡" },
@@ -429,6 +447,7 @@ const LOG_CATEGORIES = {
   control: { label: "CTL", border: "border-l-violet-500/60", bg: "bg-violet-950/20", icon: "🎛️" },
 };
 
+// Agrega un evento al registro lateral y conserva solo los ultimos MAX_LOG_ENTRIES.
 function addLog(msg, opts = {}) {
   const category = opts.category || "system";
   const severity = opts.severity || "info";
@@ -447,10 +466,12 @@ function addLog(msg, opts = {}) {
   renderActivityLog();
 }
 
+// Actualiza el contador visible del registro segun el filtro activo.
 function updateLogCount(shown) {
   document.getElementById("log-count").textContent = `${shown} / ${MAX_LOG_ENTRIES}`;
 }
 
+// Redibuja el registro lateral aplicando filtro, severidad e iconos.
 function renderActivityLog() {
   const log = document.getElementById("activity-log");
   const scrollWrap = document.getElementById("activity-log-scroll");
@@ -484,11 +505,13 @@ function renderActivityLog() {
   scrollWrap.scrollTop = 0;
 }
 
+// Limpia solo el registro visual; no modifica sensores ni alertas pendientes.
 function clearActivityLog() {
   activityEntries.length = 0;
   renderActivityLog();
 }
 
+// Maneja los chips de filtro del registro lateral.
 document.getElementById("log-filters").addEventListener("click", (ev) => {
   const btn = ev.target.closest("[data-filter]");
   if (!btn) return;
@@ -498,6 +521,7 @@ document.getElementById("log-filters").addEventListener("click", (ev) => {
 });
 
 // ── Cola de alertas con delay (operador humano) ────────────
+// Evita mostrar dos veces la misma alerta aunque llegue por reconexion o reintento.
 function isAlertDuplicate(alertId) {
   if (!alertId) return false;
   for (const a of pendingAlerts.values()) {
@@ -506,6 +530,7 @@ function isAlertDuplicate(alertId) {
   return alertQueue.some((a) => a.alert_id === alertId);
 }
 
+// Muestra u oculta el indicador de alertas en cola antes de ensenarlas al operador.
 function updateAlertQueueBadge() {
   const badge = document.getElementById("alert-queue-badge");
   const countEl = document.getElementById("alert-queue-count");
@@ -518,6 +543,7 @@ function updateAlertQueueBadge() {
   }
 }
 
+// Inserta una alerta humana en cola visual, evitando duplicados por alert_id.
 function enqueueHumanAlert(alertData) {
   if (isAlertDuplicate(alertData.alert_id)) return;
 
@@ -530,6 +556,7 @@ function enqueueHumanAlert(alertData) {
   }
 }
 
+// Saca alertas de la cola con retraso para que el operador las vea gradualmente.
 function drainAlertQueue() {
   if (alertQueueDrainTimer) {
     clearTimeout(alertQueueDrainTimer);
@@ -564,6 +591,7 @@ function drainAlertQueue() {
 }
 
 // ── Alert cards con trazabilidad ───────────────────────────
+// Renderiza una alerta pendiente con trazabilidad y botones de decision.
 function renderAlertCard(alert) {
   const cardDomId = "alert-" + (++alertCounter);
   const alertType = alert.type || alert.alert_type;
@@ -639,6 +667,7 @@ function renderAlertCard(alert) {
   addAudit("RABBITMQ", sensorLabel(alert), shortId(alertId) + " → operador");
 }
 
+// Dibuja un paso de trazabilidad dentro de cada tarjeta de alerta.
 function traceStep(num, label, detail, done) {
   return `
     <div class="trace-step relative pl-7 pb-1">
@@ -649,6 +678,7 @@ function traceStep(num, label, detail, done) {
 }
 
 // ── Decisiones ─────────────────────────────────────────────
+// Envia la decision seleccionada al action_dispatcher y actualiza la UI segun respuesta.
 async function handleDecision(cardId, action) {
   const alert = pendingAlerts.get(cardId);
   if (!alert) return;
@@ -717,6 +747,7 @@ async function handleDecision(cardId, action) {
   }
 }
 
+// Restaura el mensaje de "sin alertas" cuando se resuelve la ultima pendiente.
 function checkEmptyAlerts() {
   const panel = document.getElementById("alerts-panel");
   if (pendingAlerts.size === 0 && !document.getElementById("no-alerts-msg")) {
@@ -729,6 +760,7 @@ function checkEmptyAlerts() {
   }
 }
 
+// Agrega una tarjeta historica de decisiones ya ejecutadas.
 function addResolved(alert, action, alertType, apiData) {
   document.getElementById("no-resolved-msg")?.remove();
   const panel = document.getElementById("resolved-panel");
@@ -759,6 +791,7 @@ function addResolved(alert, action, alertType, apiData) {
 }
 
 // ── WebSockets ─────────────────────────────────────────────
+// Cambia el indicador visual de conexion WebSocket.
 function setWsStatus(elId, connected, label) {
   const el = document.getElementById(elId);
   if (connected) {
@@ -768,6 +801,7 @@ function setWsStatus(elId, connected, label) {
   }
 }
 
+// Conecta al backend de telemetria y procesa snapshots, cambios y alertas Kafka.
 function connectTelemetry() {
   const ws = new WebSocket(TELEMETRY_WS);
   ws.onopen = () => {
@@ -812,6 +846,7 @@ function connectTelemetry() {
   ws.onerror = () => ws.close();
 }
 
+// Conecta al backend del operador para recibir alertas enriquecidas desde RabbitMQ.
 function connectOperator() {
   const ws = new WebSocket(OPERATOR_WS);
   ws.onopen = () => {
@@ -832,10 +867,11 @@ function connectOperator() {
   ws.onerror = () => ws.close();
 }
 
-// Init audit placeholder
+// Placeholder inicial de la tabla de auditoria hasta que lleguen eventos reales.
 document.getElementById("audit-trail").innerHTML =
   '<tr id="no-audit-placeholder"><td colspan="4" class="px-3 py-8 text-center text-slate-600 text-xs">Los eventos del pipeline aparecerán aquí</td></tr>';
 
+// Arranque del dashboard: abre ambos WebSockets y deja contadores inicializados.
 connectTelemetry();
 connectOperator();
 updatePendingCount();

@@ -15,6 +15,7 @@ const { Kafka } = require("kafkajs");
 const { WebSocketServer } = require("ws");
 
 // ── Configuración ──────────────────────────────────────────
+// Broker, puerto WebSocket y topicos que alimentan el estado visual de planta.
 const KAFKA_BROKER = process.env.KAFKA_BROKER || "localhost:29092";
 const WS_PORT = 8081;
 const TOPIC_SENSOR_STATUS = "sensor_status";
@@ -28,9 +29,12 @@ const kafka = new Kafka({
 });
 
 const consumer = kafka.consumer({ groupId: "plant-monitor-group" });
+// Ultimo estado conocido por sensor; permite enviar snapshots completos a clientes nuevos.
 const plantState = new Map();
+// Estados controlados por operador que no deben ser sobreescritos por alertas viejas.
 const OPERATOR_CONTROL_STATUSES = new Set(["SHUTDOWN", "COOLDOWN", "MAINTENANCE"]);
 
+// Servidor WebSocket que entrega el estado en tiempo real al dashboard.
 const wss = new WebSocketServer({ port: WS_PORT });
 
 wss.on("connection", (ws) => {
@@ -43,6 +47,7 @@ wss.on("connection", (ws) => {
   });
 });
 
+// Envia un cambio a todos los navegadores conectados y activos.
 function broadcast(payload) {
   const message = JSON.stringify(payload);
   wss.clients.forEach((client) => {
@@ -52,6 +57,7 @@ function broadcast(payload) {
   });
 }
 
+// Reintenta conexion Kafka mientras el broker termina de levantar.
 async function connectWithRetry(label, connectFn, delayMs = 4000) {
   let connected = false;
   while (!connected) {
@@ -66,6 +72,7 @@ async function connectWithRetry(label, connectFn, delayMs = 4000) {
   }
 }
 
+// Convierte mensajes Kafka en actualizaciones de estado y eventos WebSocket.
 function processMessage(topic, payload) {
   const sensorKey = payload.sensor_id;
   const displayId = payload.sensor_code
@@ -129,6 +136,7 @@ function processMessage(topic, payload) {
   }
 }
 
+// Punto de entrada: conecta Kafka, se suscribe a topicos y procesa mensajes continuamente.
 (async () => {
   console.log("═══════════════════════════════════════════════════════════════");
   console.log("  PLANT MONITOR BACKEND — WebSocket :8081 (Telemetría)        ");

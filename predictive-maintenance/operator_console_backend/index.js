@@ -15,11 +15,13 @@ const amqp = require("amqplib");
 const { WebSocketServer } = require("ws");
 
 // ── Configuración ──────────────────────────────────────────
+// Conexion RabbitMQ, puerto WebSocket y exchange desde donde llegan alertas humanas.
 const RABBITMQ_URL = process.env.RABBITMQ_URL || "amqp://admin:admin123@localhost:5672";
 const WS_PORT = 8082;
 const RABBIT_EXCHANGE = "human_alerts";
 
 // ── WebSocket Server ───────────────────────────────────────
+// Servidor WebSocket para enviar alertas pendientes al frontend del operador.
 const wss = new WebSocketServer({ port: WS_PORT });
 
 wss.on("connection", (ws) => {
@@ -30,6 +32,7 @@ wss.on("connection", (ws) => {
 });
 
 // ── Broadcast a todos los operadores ───────────────────────
+// Reenvia cada alerta a todos los operadores conectados.
 function broadcastToOperators(payload) {
   const message = JSON.stringify(payload);
   wss.clients.forEach((client) => {
@@ -40,6 +43,7 @@ function broadcastToOperators(payload) {
 }
 
 // ── Reintento resiliente ───────────────────────────────────
+// Reintenta RabbitMQ para que el servicio resista arranques desordenados.
 async function connectWithRetry(label, connectFn, delayMs = 4000) {
   let connected = false;
   while (!connected) {
@@ -56,6 +60,7 @@ async function connectWithRetry(label, connectFn, delayMs = 4000) {
 }
 
 // ── Configuración RabbitMQ ─────────────────────────────────
+// Crea una cola temporal exclusiva y consume las alertas publicadas por alert_router.
 async function setupRabbitConsumer() {
   const connection = await amqp.connect(RABBITMQ_URL);
   const channel = await connection.createChannel();
@@ -104,6 +109,7 @@ async function setupRabbitConsumer() {
 }
 
 // ── Main ───────────────────────────────────────────────────
+// Punto de entrada: activa WebSocket y suscripcion RabbitMQ para la consola.
 (async () => {
   console.log("══════════════════════════════════════════════════════════════");
   console.log("  OPERATOR CONSOLE — Consola de Decisiones Humanas (:8082)   ");

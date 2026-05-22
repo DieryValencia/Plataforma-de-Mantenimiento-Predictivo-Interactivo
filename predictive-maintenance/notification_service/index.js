@@ -16,6 +16,7 @@ const path = require("path");
 const crypto = require("crypto");
 const amqp = require("amqplib");
 
+// Configuracion de integraciones: RabbitMQ, API local de decision y URL publica del panel movil.
 const RABBITMQ_URL = process.env.RABBITMQ_URL || "amqp://admin:admin123@localhost:5672";
 const RABBIT_EXCHANGE = "human_alerts";
 const HTTP_PORT = Number(process.env.HTTP_PORT) || 3003;
@@ -24,12 +25,15 @@ const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || "http://localhost:3003")
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || "";
+
+// Banderas para controlar si se notifican solo criticas o tambien advertencias.
 const NOTIFY_CRITICAL_ONLY = process.env.NOTIFY_CRITICAL_ONLY !== "false";
 const NOTIFY_WARNINGS = process.env.NOTIFY_WARNINGS === "true";
 
 const NTFY_TOPIC = process.env.NTFY_TOPIC || "";
 const NTFY_SERVER = (process.env.NTFY_SERVER || "https://ntfy.sh").replace(/\/$/, "");
 
+// Limites de ritmo para no saturar Telegram ni duplicar notificaciones.
 const TELEGRAM_QUEUE_DELAY_MS = Number(process.env.TELEGRAM_QUEUE_DELAY_MS) || 5000;
 const TELEGRAM_MIN_INTERVAL_MS = Number(process.env.TELEGRAM_MIN_INTERVAL_MS) || 3500;
 const MAX_NOTIFY_QUEUE = Number(process.env.MAX_NOTIFY_QUEUE) || 25;
@@ -48,10 +52,12 @@ const ACTION_CODES = {
   RECONOCER_Y_ESPERAR_24H: "R24",
 };
 
+// Traduccion inversa del codigo corto de Telegram a la accion interna.
 const CODE_TO_ACTION = Object.fromEntries(
   Object.entries(ACTION_CODES).map(([k, v]) => [v, k])
 );
 
+// Estado en memoria: alertas pendientes, callbacks de Telegram y cola de envio.
 const alertsStore = new Map();
 const callbackStore = new Map();
 const notifyQueue = [];
@@ -63,14 +69,17 @@ let lastTelegramSentAt = 0;
 let telegramPollRunning = false;
 const MAX_ALERTS_STORE = 40;
 
+// Pausa asincrona usada para espaciar polls y envios.
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+// Genera una llave corta para identificar callbacks de Telegram sin exponer todo el payload.
 function shortKey() {
   return crypto.randomBytes(4).toString("hex");
 }
 
+// Decide si una alerta amerita push segun severidad y configuracion.
 function shouldNotify(alert) {
   if (alert.type === "CRITICAL") return true;
   if (NOTIFY_WARNINGS && alert.type === "WARNING") return true;
@@ -78,6 +87,17 @@ function shouldNotify(alert) {
   return true;
 }
 
+// Telegram rechaza botones URL con localhost/127.0.0.1; solo se agrega el enlace si es publico.
+function hasPublicMobileUrl() {
+  try {
+    const url = new URL(PUBLIC_BASE_URL);
+    return !["localhost", "127.0.0.1", "0.0.0.0"].includes(url.hostname);
+  } catch (_) {
+    return false;
+  }
+}
+
+// Reintenta servicios externos hasta que esten disponibles.
 async function connectWithRetry(label, fn, delayMs = 4000) {
   while (true) {
     try {
@@ -89,6 +109,7 @@ async function connectWithRetry(label, fn, delayMs = 4000) {
   }
 }
 
+// Guarda alertas recientes y recorta el historial para no crecer indefinidamente.
 function storeAlert(alert) {
   alertsStore.set(alert.alert_id, { ...alert, received_at: new Date().toISOString() });
   while (alertsStore.size > MAX_ALERTS_STORE) {
@@ -116,10 +137,12 @@ function enqueueNotification(alert) {
   startNotifyDrain();
 }
 
+// Activa el drenado de cola solo si no hay otro drenado corriendo.
 function startNotifyDrain() {
   if (!notifyDraining) drainNotificationQueue();
 }
 
+// Procesa la cola respetando intervalos minimos entre envios a Telegram.
 async function drainNotificationQueue() {
   if (notifyDraining) return;
   notifyDraining = true;
@@ -182,6 +205,7 @@ async function telegramApi(method, body = {}) {
   return data.result;
 }
 
+// Construye botones inline de Telegram y asocia cada boton con su contexto de alerta.
 function buildTelegramKeyboard(alert) {
   const rows = [];
   const options = alert.options || [];
@@ -204,15 +228,18 @@ function buildTelegramKeyboard(alert) {
     }
     rows.push(row);
   }
-  rows.push([
-    {
-      text: "📱 Abrir panel móvil",
-      url: `${PUBLIC_BASE_URL}/m?alert=${alert.alert_id}`,
-    },
-  ]);
+  if (hasPublicMobileUrl()) {
+    rows.push([
+      {
+        text: "📱 Abrir panel móvil",
+        url: `${PUBLIC_BASE_URL}/m?alert=${alert.alert_id}`,
+      },
+    ]);
+  }
   return { inline_keyboard: rows };
 }
 
+// Envia a Telegram el mensaje principal de alerta con botones de decision.
 async function sendTelegramAlert(alert) {
   const icon = alert.type === "CRITICAL" ? "🔴" : "🟡";
   const text = [
@@ -238,6 +265,7 @@ async function sendTelegramAlert(alert) {
   console.log(`[notification] 📲 Telegram → ${alert.type} sensor ${alert.sensor_id}`);
 }
 
+// Confirma al usuario de Telegram que su toque fue recibido.
 async function answerTelegramCallback(callbackQueryId, text) {
   await telegramApi("answerCallbackQuery", {
     callback_query_id: callbackQueryId,
@@ -246,6 +274,7 @@ async function answerTelegramCallback(callbackQueryId, text) {
   });
 }
 
+// Edita el mensaje original para dejar constancia de que la decision ya se ejecuto.
 async function editTelegramMessage(chatId, messageId, text) {
   try {
     await telegramApi("editMessageText", {
@@ -257,6 +286,7 @@ async function editTelegramMessage(chatId, messageId, text) {
   } catch (_) {}
 }
 
+// Envia una notificacion push via ntfy si el topico esta configurado.
 async function sendNtfyPush(alert) {
   if (!NTFY_TOPIC) return;
 
@@ -276,6 +306,7 @@ async function sendNtfyPush(alert) {
   });
 }
 
+// Llama al action_dispatcher para ejecutar la decision elegida desde movil/Telegram.
 async function executeDecision(decision) {
   const res = await fetch(DECIDE_URL, {
     method: "POST",
@@ -355,6 +386,7 @@ async function pollTelegramUpdatesLoop() {
   }
 }
 
+// Consume alertas humanas desde RabbitMQ y las guarda/encola para notificacion.
 async function startRabbitConsumer() {
   const connection = await amqp.connect(RABBITMQ_URL);
   const channel = await connection.createChannel();
@@ -391,10 +423,12 @@ async function startRabbitConsumer() {
   });
 }
 
+// Lee el HTML movil servido desde public/.
 function readStatic(file) {
   return fs.readFileSync(path.join(__dirname, "public", file), "utf8");
 }
 
+// Lee y parsea JSON de peticiones HTTP entrantes.
 function parseBody(req) {
   return new Promise((resolve, reject) => {
     let data = "";
@@ -410,6 +444,7 @@ function parseBody(req) {
   });
 }
 
+// API HTTP del servicio: salud, alertas pendientes, decision movil y pagina /m.
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, PUBLIC_BASE_URL);
 
@@ -465,6 +500,7 @@ const server = http.createServer(async (req, res) => {
   res.end(JSON.stringify({ error: "Not found" }));
 });
 
+// Punto de entrada: configura Telegram opcional, RabbitMQ y servidor HTTP.
 (async () => {
   console.log("══════════════════════════════════════════════════════════════");
   console.log("  NOTIFICATION SERVICE — Cola + Telegram (un solo poll)        ");

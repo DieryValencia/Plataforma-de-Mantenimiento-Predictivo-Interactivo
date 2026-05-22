@@ -13,6 +13,7 @@
 const http = require("http");
 const { Kafka } = require("kafkajs");
 
+// Configuracion principal: broker Kafka, puerto HTTP de control y topicos usados por el simulador.
 const KAFKA_BROKER = process.env.KAFKA_BROKER || "localhost:29092";
 const CONTROL_PORT = Number(process.env.CONTROL_PORT) || 3002;
 const TOPIC_SENSOR_DATA = "sensor_data";
@@ -20,11 +21,13 @@ const TOPIC_SENSOR_STATUS = "sensor_status";
 const TOPIC_ALERTS_CRITICAL = "alerts_critical";
 const TOPIC_ALERTS_WARNING = "alerts_warning";
 
+// Sensores simulados de la planta. Cada uno mantiene su propio estado en memoria.
 const SENSOR_IDS = [
   "sensor_A", "sensor_B", "sensor_C", "sensor_D", "sensor_E",
   "sensor_F", "sensor_G", "sensor_H", "sensor_I", "sensor_J",
 ];
 
+// Tiempos de simulacion. Permiten acelerar o alargar la demo desde variables de entorno.
 const PUBLISH_INTERVAL_MS = 500;
 const MAINTENANCE_DURATION_MS = Number(process.env.MAINTENANCE_DURATION_MS) || 45000;
 const DELAY_10MIN_MS = Number(process.env.DELAY_10MIN_MS) || 600000;
@@ -36,6 +39,7 @@ let nextCriticalAllowedAt = Date.now() + 15000;
 let warningBurstSensor = null;
 let warningBurstRemaining = 0;
 
+// Modos posibles de un sensor; definen si produce datos, queda pausado o se apaga.
 const MODES = {
   ACTIVE: "ACTIVE",
   SHUTDOWN: "SHUTDOWN",
@@ -52,9 +56,10 @@ const kafka = new Kafka({
 const admin = kafka.admin();
 const producer = kafka.producer();
 
-/** @type {Map<string, object>} */
+/** Estado vivo de cada sensor: modo, ultima lectura, timers y accion aplicada. */
 const sensorState = new Map();
 
+// Normaliza entradas como "A" o "sensor_a" al formato interno "sensor_A".
 function toFullSensorId(id) {
   if (!id) return null;
   const s = String(id).trim();
@@ -62,11 +67,13 @@ function toFullSensorId(id) {
   return `sensor_${s.replace(/^sensor_/i, "").toUpperCase()}`;
 }
 
+// Extrae el codigo corto visible del sensor para mensajes y dashboard.
 function toSensorCode(sensorId) {
   const m = String(sensorId).match(/sensor_([A-J])/i);
   return m ? m[1].toUpperCase() : sensorId;
 }
 
+// Genera enteros dentro de un rango para simular lecturas de vibracion.
 function randomInt(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
@@ -106,6 +113,7 @@ function generateControlledVibration(sensorId) {
   return randomInt(42, 74);
 }
 
+// Crea el estado inicial de todos los sensores como activos y con una lectura normal.
 function initSensorStates() {
   SENSOR_IDS.forEach((id) => {
     sensorState.set(id, {
@@ -120,6 +128,7 @@ function initSensorStates() {
   });
 }
 
+// Reintenta conexiones externas hasta que el servicio dependiente quede listo.
 async function connectWithRetry(label, connectFn, delayMs = 4000) {
   let connected = false;
   while (!connected) {
@@ -134,6 +143,7 @@ async function connectWithRetry(label, connectFn, delayMs = 4000) {
   }
 }
 
+// Crea o verifica los topicos Kafka que usa la simulacion.
 async function ensureTopics() {
   const topics = [
     { topic: TOPIC_SENSOR_DATA, numPartitions: 3, replicationFactor: 1 },
@@ -149,6 +159,7 @@ async function ensureTopics() {
   }
 }
 
+// Cancela una reactivacion pendiente para no mezclar decisiones anteriores con nuevas.
 function clearReactivateTimer(st) {
   if (st.reactivateTimer) {
     clearTimeout(st.reactivateTimer);
@@ -156,6 +167,7 @@ function clearReactivateTimer(st) {
   }
 }
 
+// Programa el regreso automatico del sensor a ACTIVE tras cooldown o mantenimiento.
 function scheduleModeEnd(sensorId, ms, nextMode = MODES.ACTIVE) {
   const st = sensorState.get(sensorId);
   if (!st) return;
@@ -171,6 +183,7 @@ function scheduleModeEnd(sensorId, ms, nextMode = MODES.ACTIVE) {
   }, ms);
 }
 
+// Publica el estado actual del sensor para mantener sincronizado el dashboard.
 async function publishStatus(sensorId, message) {
   const st = sensorState.get(sensorId);
   if (!st) return;
@@ -230,6 +243,7 @@ async function publishStatus(sensorId, message) {
   }
 }
 
+// Aplica la decision humana recibida desde action_dispatcher al sensor indicado.
 function applyControl(body) {
   const sensorId = toFullSensorId(body.sensor_id);
   if (!sensorId || !sensorState.has(sensorId)) {
@@ -288,10 +302,12 @@ function applyControl(body) {
   }
 }
 
+// Filtra sensores que aun pueden generar telemetria.
 function getActiveSensors() {
   return SENSOR_IDS.filter((id) => sensorState.get(id).mode === MODES.ACTIVE);
 }
 
+// Ejecuta un ciclo de telemetria: reporta estados pausados y publica una lectura activa.
 async function publishTelemetryTick() {
   for (const sensorId of SENSOR_IDS) {
     const st = sensorState.get(sensorId);
@@ -334,11 +350,13 @@ async function publishTelemetryTick() {
   }
 }
 
+// Arranca el intervalo de publicacion de lecturas simuladas.
 function startPublishing() {
   console.log(`[sensor_producer] 🚀 Telemetría cada ${PUBLISH_INTERVAL_MS}ms`);
   setInterval(() => publishTelemetryTick(), PUBLISH_INTERVAL_MS);
 }
 
+// Expone endpoints HTTP: /control para decisiones y /health para diagnostico.
 function startControlServer() {
   const server = http.createServer(async (req, res) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
@@ -390,6 +408,7 @@ function startControlServer() {
   });
 }
 
+// Punto de entrada del servicio: inicializa sensores, Kafka, topicos y API de control.
 (async () => {
   console.log("═══════════════════════════════════════════════════");
   console.log("  SENSOR PRODUCER — Telemetría + Control Operador   ");

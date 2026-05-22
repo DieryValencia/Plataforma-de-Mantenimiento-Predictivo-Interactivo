@@ -17,12 +17,14 @@ const { Kafka } = require("kafkajs");
 const amqp = require("amqplib");
 
 // ── Configuración ──────────────────────────────────────────
+// Conexiones y nombres de topicos/exchange que unen Kafka con RabbitMQ.
 const KAFKA_BROKER = process.env.KAFKA_BROKER || "localhost:29092";
 const RABBITMQ_URL = process.env.RABBITMQ_URL || "amqp://admin:admin123@localhost:5672";
 const TOPIC_ALERTS_CRITICAL = "alerts_critical";
 const TOPIC_ALERTS_WARNING = "alerts_warning";
 const RABBIT_EXCHANGE = "human_alerts";
 
+// Opciones que se mostraran al operador segun el nivel de alerta.
 const CRITICAL_OPTIONS_POOL = ["APAGADO_INMEDIATO", "IGNORAR_10_MINUTOS"];
 const WARNING_OPTIONS_POOL = ["PROGRAMAR_MANTENIMIENTO_AHORA", "RECONOCER_Y_ESPERAR_24H"];
 
@@ -35,8 +37,10 @@ const kafka = new Kafka({
 
 const consumer = kafka.consumer({ groupId: "alert-router-group" });
 
+// Canal RabbitMQ reutilizado para publicar las alertas enriquecidas.
 let rabbitChannel = null;
 
+// Reintenta conexiones para tolerar que Kafka/RabbitMQ aun no esten listos.
 async function connectWithRetry(label, connectFn, delayMs = 4000) {
   let connected = false;
   while (!connected) {
@@ -51,6 +55,7 @@ async function connectWithRetry(label, connectFn, delayMs = 4000) {
   }
 }
 
+// Convierte un id completo a codigo corto para que el operador vea "A", "B", etc.
 function toSensorCode(sensorId) {
   if (!sensorId) return "UNKNOWN";
   const match = String(sensorId).match(/sensor_([A-J])/i);
@@ -63,6 +68,7 @@ function buildOptions(pool) {
   return [...pool];
 }
 
+// Declara el exchange fanout donde se publicaran alertas para humanos.
 async function setupRabbitMQ() {
   const connection = await amqp.connect(RABBITMQ_URL);
   rabbitChannel = await connection.createChannel();
@@ -70,6 +76,7 @@ async function setupRabbitMQ() {
   console.log(`[alert_router] 📢 Exchange Fanout '${RABBIT_EXCHANGE}' declarado.`);
 }
 
+// Crea el mensaje final que consumira la consola del operador.
 function buildHumanAlertMessage(alertPayload, sourceTopic) {
   const type = sourceTopic === TOPIC_ALERTS_CRITICAL ? "CRITICAL" : "WARNING";
   const optionsPool =
@@ -88,6 +95,7 @@ function buildHumanAlertMessage(alertPayload, sourceTopic) {
   };
 }
 
+// Publica la alerta enriquecida en RabbitMQ para todos los consumidores humanos.
 function publishToRabbit(humanAlert) {
   if (!rabbitChannel) {
     console.error("[alert_router] ❌ Canal RabbitMQ no disponible.");
@@ -106,6 +114,7 @@ function publishToRabbit(humanAlert) {
   );
 }
 
+// Punto de entrada: conecta ambos brokers y reenvia cada alerta Kafka hacia RabbitMQ.
 (async () => {
   console.log("═══════════════════════════════════════════════════════════");
   console.log("  ALERT ROUTER — Puente Kafka → RabbitMQ                   ");
