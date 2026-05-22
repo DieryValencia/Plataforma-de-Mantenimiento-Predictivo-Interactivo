@@ -77,16 +77,20 @@ async function setupRabbitConsumer() {
 
     try {
       const alertPayload = JSON.parse(msg.content.toString());
-      const level = alertPayload.alert_type === "CRITICAL" ? "🔴" : "🟡";
+      const alertType = alertPayload.type || alertPayload.alert_type;
+      const level = alertType === "CRITICAL" ? "🔴" : "🟡";
 
       console.log(
-        `[operator_console] ${level} Alerta recibida → sensor: ${alertPayload.sensor_id} | tipo: ${alertPayload.alert_type}`
+        `[operator_console] ${level} Alerta recibida → alert_id: ${alertPayload.alert_id} | sensor: ${alertPayload.sensor_id} | tipo: ${alertType}`
       );
 
-      // Despachar al frontend vía WebSocket
       broadcastToOperators({
         type: "HUMAN_ALERT",
-        data: alertPayload,
+        data: {
+          ...alertPayload,
+          alert_type: alertType,
+          type: alertType,
+        },
       });
 
       channel.ack(msg);
