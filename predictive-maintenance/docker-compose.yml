@@ -223,19 +223,8 @@ services:
         condition: service_healthy
       action_dispatcher:
         condition: service_started
-    environment:
-      RABBITMQ_URL: amqp://admin:admin123@rabbitmq:5672
-      DECIDE_URL: http://action_dispatcher:3000/decide
-      PUBLIC_BASE_URL: http://localhost:3003
-      HTTP_PORT: "3003"
-      NOTIFY_CRITICAL_ONLY: "true"
-      NOTIFY_WARNINGS: "false"
-      TELEGRAM_QUEUE_DELAY_MS: "5000"
-      TELEGRAM_MIN_INTERVAL_MS: "3500"
-      MAX_NOTIFY_QUEUE: "25"
     env_file:
-      - path: ./notification_service/.env
-        required: false
+      - ./notification_service/.env
     restart: on-failure
     networks:
       - iot-network
