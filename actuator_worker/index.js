@@ -2,8 +2,8 @@
  * ============================================================
  *  ACTUATOR WORKER — Ejecutor de Acciones Críticas
  * ============================================================
- *  Consume de `critical_actions_queue` y simula con logs de
- *  alta visibilidad el corte de energía del actuador industrial.
+ *  Consume de `critical_actions_queue` vinculada al Exchange
+ *  Direct `actions_direct` (routing key: critical).
  * ============================================================
  */
 
@@ -11,11 +11,13 @@
 
 const amqp = require("amqplib");
 
-// ── Configuración ──────────────────────────────────────────
+// Conexion y ruta RabbitMQ donde llegan las acciones criticas de apagado.
 const RABBITMQ_URL = process.env.RABBITMQ_URL || "amqp://admin:admin123@localhost:5672";
+const ACTIONS_DIRECT = "actions_direct";
+const RK_CRITICAL = "critical";
 const CRITICAL_QUEUE = "critical_actions_queue";
 
-// ── Reintento resiliente ───────────────────────────────────
+// Reintenta la conexion para soportar arranques donde RabbitMQ aun no esta listo.
 async function connectWithRetry(label, connectFn, delayMs = 4000) {
   let connected = false;
   while (!connected) {
@@ -31,12 +33,13 @@ async function connectWithRetry(label, connectFn, delayMs = 4000) {
   }
 }
 
-// ── Simulación de Corte de Energía ─────────────────────────
+// Simula el apagado industrial y muestra los datos de la decision ejecutada.
 function simulateShutdown(payload) {
   console.log("");
   console.log("╔══════════════════════════════════════════════════════════════╗");
   console.log("║  ⚡⚡⚡  CORTE DE ENERGÍA — ACTUADOR INDUSTRIAL  ⚡⚡⚡       ║");
   console.log("╠══════════════════════════════════════════════════════════════╣");
+  console.log(`║  🆔 Alert ID:    ${payload.alert_id || "N/A"}`.padEnd(63) + "║");
   console.log(`║  🏭 Sensor:      ${payload.sensor_id || "N/A"}`.padEnd(63) + "║");
   console.log(`║  🔴 Acción:      ${payload.chosen_action || "APAGADO_INMEDIATO"}`.padEnd(63) + "║");
   console.log(`║  ⏰ Timestamp:   ${payload.dispatched_at || new Date().toISOString()}`.padEnd(63) + "║");
@@ -49,15 +52,17 @@ function simulateShutdown(payload) {
   console.log("");
 }
 
-// ── Configuración RabbitMQ + Consumo ───────────────────────
+// Declara el exchange/cola critica y consume una accion a la vez.
 async function setupConsumer() {
   const connection = await amqp.connect(RABBITMQ_URL);
   const channel = await connection.createChannel();
 
+  await channel.assertExchange(ACTIONS_DIRECT, "direct", { durable: true });
   await channel.assertQueue(CRITICAL_QUEUE, { durable: true });
-  channel.prefetch(1); // Procesar un mensaje a la vez
+  await channel.bindQueue(CRITICAL_QUEUE, ACTIONS_DIRECT, RK_CRITICAL);
+  channel.prefetch(1);
 
-  console.log(`[actuator_worker] 👂 Esperando mensajes en '${CRITICAL_QUEUE}'…`);
+  console.log(`[actuator_worker] 👂 Esperando en '${CRITICAL_QUEUE}' ← ${ACTIONS_DIRECT}[${RK_CRITICAL}]`);
 
   channel.consume(CRITICAL_QUEUE, (msg) => {
     if (!msg) return;
@@ -75,7 +80,7 @@ async function setupConsumer() {
   return connection;
 }
 
-// ── Main ───────────────────────────────────────────────────
+// Punto de entrada: conecta RabbitMQ y deja el actuador esperando ordenes criticas.
 (async () => {
   console.log("══════════════════════════════════════════════════════════════");
   console.log("  ACTUATOR WORKER — Ejecutor de Acciones Críticas            ");

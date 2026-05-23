@@ -71,11 +71,20 @@ services:
       context: ./sensor_producer
       dockerfile: Dockerfile
     container_name: sensor_producer
+    ports:
+      - "3002:3002"
     depends_on:
       kafka:
         condition: service_healthy
     environment:
       KAFKA_BROKER: kafka:29092
+      CONTROL_PORT: "3002"
+      DELAY_10MIN_MS: "600000"
+      DELAY_24H_MS: "86400000"
+      MAINTENANCE_DURATION_MS: "45000"
+      # 1 alerta crítica en toda la planta cada 5 min (300000 ms). Producción: 28800000 = 8 h
+      # Pruebas Telegram: una alerta critica aprox. cada 60 s.
+      CRITICAL_INTERVAL_MS: "60000"
     restart: on-failure
     networks:
       - iot-network
@@ -132,6 +141,8 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
+      alert_detector:
+        condition: service_started
     environment:
       KAFKA_BROKER: kafka:29092
     restart: on-failure
@@ -170,8 +181,13 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
+      sensor_producer:
+        condition: service_started
     environment:
       RABBITMQ_URL: amqp://admin:admin123@rabbitmq:5672
+      SENSOR_CONTROL_URL: http://sensor_producer:3002
+      DELAY_24H_MS: "86400000"
+      DELAY_10MIN_MS: "600000"
     restart: on-failure
     networks:
       - iot-network
@@ -189,6 +205,27 @@ services:
         condition: service_healthy
     environment:
       RABBITMQ_URL: amqp://admin:admin123@rabbitmq:5672
+    restart: on-failure
+    networks:
+      - iot-network
+
+  # ============================================================
+  # MICROSERVICIO 9: Notificaciones móviles (Telegram + Web /m)
+  # ============================================================
+  notification_service:
+    build:
+      context: ./notification_service
+      dockerfile: Dockerfile
+    container_name: notification_service
+    ports:
+      - "3003:3003"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      action_dispatcher:
+        condition: service_started
+    env_file:
+      - ./notification_service/.env
     restart: on-failure
     networks:
       - iot-network
