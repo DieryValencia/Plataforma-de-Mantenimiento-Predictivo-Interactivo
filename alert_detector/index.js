@@ -6,7 +6,7 @@
  *  últimas 3 lecturas por sensor_id y evalúa dos reglas:
  *
  *   Regla 1 (CRITICAL): vibración > 90  →  alerts_critical
- *   Regla 2 (WARNING) : 3 lecturas consecutivas > 75  →  alerts_warning
+ *   Regla 2 (WARNING) : 3 lecturas consecutivas > 75  →  alerts_warning      (Advertencia)
  *
  *  Publica estado consolidado en `sensor_status` para el dashboard.
  * ============================================================
