@@ -83,7 +83,8 @@ services:
       DELAY_24H_MS: "86400000"
       MAINTENANCE_DURATION_MS: "45000"
       # 1 alerta crítica en toda la planta cada 5 min (300000 ms). Producción: 28800000 = 8 h
-      CRITICAL_INTERVAL_MS: "300000"
+      # Pruebas Telegram: una alerta critica aprox. cada 60 s.
+      CRITICAL_INTERVAL_MS: "60000"
     restart: on-failure
     networks:
       - iot-network

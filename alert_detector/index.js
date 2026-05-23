@@ -6,7 +6,7 @@
  *  últimas 3 lecturas por sensor_id y evalúa dos reglas:
  *
  *   Regla 1 (CRITICAL): vibración > 90  →  alerts_critical
- *   Regla 2 (WARNING) : 3 lecturas consecutivas > 75  →  alerts_warning
+ *   Regla 2 (WARNING) : 3 lecturas consecutivas > 75  →  alerts_warning      (Advertencia)
  *
  *  Publica estado consolidado en `sensor_status` para el dashboard.
  * ============================================================
@@ -17,6 +17,7 @@
 const { Kafka } = require("kafkajs");
 
 // ── Configuración ──────────────────────────────────────────
+// Broker, topicos y tamano de ventana usados para detectar condiciones anormales.
 const KAFKA_BROKER = process.env.KAFKA_BROKER || "localhost:29092";
 const TOPIC_SENSOR_DATA = "sensor_data";
 const TOPIC_SENSOR_STATUS = "sensor_status";
@@ -35,10 +36,13 @@ const consumer = kafka.consumer({ groupId: "alert-detector-group" });
 const producer = kafka.producer();
 
 // ── Estado en Memoria — Ventana Móvil por Sensor ───────────
+// Historial corto por sensor para validar la regla de 3 lecturas consecutivas.
 const sensorWindows = new Map(); // sensor_id → number[]
+// Ultimo estado calculado por sensor para mantener continuidad entre lecturas.
 const sensorStatuses = new Map(); // sensor_id → "OK" | "WARNING" | "CRITICAL"
 
 // ── Reintento resiliente ───────────────────────────────────
+// Reintenta conexiones Kafka para soportar arranques por contenedores.
 async function connectWithRetry(label, connectFn, delayMs = 4000) {
   let connected = false;
   while (!connected) {
@@ -53,12 +57,14 @@ async function connectWithRetry(label, connectFn, delayMs = 4000) {
   }
 }
 
+// Obtiene la letra/codigo del sensor para payloads consumibles por UI y otros servicios.
 function toSensorCode(sensorId) {
   const match = String(sensorId).match(/sensor_([A-J])/i);
   return match ? match[1].toUpperCase() : sensorId;
 }
 
 // ── Publicar alerta a Kafka ────────────────────────────────
+// Publica una alerta en el topico correspondiente cuando se cumple una regla.
 async function publishAlert(topic, sensorId, alertPayload) {
   try {
     await producer.send({
@@ -80,6 +86,7 @@ async function publishAlert(topic, sensorId, alertPayload) {
 }
 
 // ── Publicar estado consolidado (sensor_status) ────────────
+// Publica el estado consolidado para que el dashboard siempre tenga la ultima lectura.
 async function publishSensorStatus(sensorId, vibration, timestamp, status) {
   const payload = {
     sensor_id: sensorId,
@@ -102,6 +109,7 @@ async function publishSensorStatus(sensorId, vibration, timestamp, status) {
 }
 
 // ── Evaluación de Reglas ───────────────────────────────────
+// Actualiza la ventana movil y evalua reglas CRITICAL/WARNING para una lectura.
 async function evaluateRules(sensorId, vibration, timestamp) {
   if (!sensorWindows.has(sensorId)) {
     sensorWindows.set(sensorId, []);
@@ -162,6 +170,7 @@ async function evaluateRules(sensorId, vibration, timestamp) {
 }
 
 // ── Main ───────────────────────────────────────────────────
+// Punto de entrada: conecta productor/consumidor y evalua cada lectura entrante.
 (async () => {
   console.log("═══════════════════════════════════════════════════════");
   console.log("  ALERT DETECTOR — Ventana Móvil Stateful (Kafka)      ");

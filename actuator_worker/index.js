@@ -11,11 +11,13 @@
 
 const amqp = require("amqplib");
 
+// Conexion y ruta RabbitMQ donde llegan las acciones criticas de apagado.
 const RABBITMQ_URL = process.env.RABBITMQ_URL || "amqp://admin:admin123@localhost:5672";
 const ACTIONS_DIRECT = "actions_direct";
 const RK_CRITICAL = "critical";
 const CRITICAL_QUEUE = "critical_actions_queue";
 
+// Reintenta la conexion para soportar arranques donde RabbitMQ aun no esta listo.
 async function connectWithRetry(label, connectFn, delayMs = 4000) {
   let connected = false;
   while (!connected) {
@@ -31,6 +33,7 @@ async function connectWithRetry(label, connectFn, delayMs = 4000) {
   }
 }
 
+// Simula el apagado industrial y muestra los datos de la decision ejecutada.
 function simulateShutdown(payload) {
   console.log("");
   console.log("╔══════════════════════════════════════════════════════════════╗");
@@ -49,6 +52,7 @@ function simulateShutdown(payload) {
   console.log("");
 }
 
+// Declara el exchange/cola critica y consume una accion a la vez.
 async function setupConsumer() {
   const connection = await amqp.connect(RABBITMQ_URL);
   const channel = await connection.createChannel();
@@ -76,6 +80,7 @@ async function setupConsumer() {
   return connection;
 }
 
+// Punto de entrada: conecta RabbitMQ y deja el actuador esperando ordenes criticas.
 (async () => {
   console.log("══════════════════════════════════════════════════════════════");
   console.log("  ACTUATOR WORKER — Ejecutor de Acciones Críticas            ");

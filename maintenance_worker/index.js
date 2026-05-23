@@ -12,6 +12,7 @@
 
 const amqp = require("amqplib");
 
+// Datos de conexion y nombres de exchanges/colas desde donde llegan ordenes de mantenimiento.
 const RABBITMQ_URL = process.env.RABBITMQ_URL || "amqp://admin:admin123@localhost:5672";
 const ACTIONS_DIRECT = "actions_direct";
 const RK_MAINTENANCE = "maintenance";
@@ -20,6 +21,7 @@ const DELAYED_EXCHANGE = "delayed_exchange";
 const RK_MAINTENANCE_DELAYED = "maintenance_delayed";
 const RK_IGNORE_DELAYED = "ignore_delayed";
 
+// Reintenta la conexion a RabbitMQ hasta que el broker este disponible.
 async function connectWithRetry(label, connectFn, delayMs = 4000) {
   let connected = false;
   while (!connected) {
@@ -35,6 +37,7 @@ async function connectWithRetry(label, connectFn, delayMs = 4000) {
   }
 }
 
+// Simula el procesamiento de una orden y deja evidencia clara en consola.
 function processMaintenanceOrder(payload) {
   const action = payload.chosen_action;
   const isDelayed24h = action === "RECONOCER_Y_ESPERAR_24H";
@@ -76,6 +79,7 @@ function processMaintenanceOrder(payload) {
   console.log("");
 }
 
+// Declara exchanges/colas, configura prefetch y consume ordenes de mantenimiento.
 async function setupConsumer() {
   const connection = await amqp.connect(RABBITMQ_URL);
   const channel = await connection.createChannel();
@@ -113,6 +117,7 @@ async function setupConsumer() {
   return connection;
 }
 
+// Punto de entrada: prepara RabbitMQ y deja el worker escuchando indefinidamente.
 (async () => {
   console.log("══════════════════════════════════════════════════════════════");
   console.log("  MAINTENANCE WORKER — Órdenes de Mantenimiento              ");

@@ -18,26 +18,35 @@
 const http = require("http");
 const amqp = require("amqplib");
 
+// URL de conexión a RabbitMQ y puerto local del servidor HTTP.
 const RABBITMQ_URL = process.env.RABBITMQ_URL || "amqp://admin:admin123@localhost:5672";
+// Puerto donde el dashboard envia decisiones humanas con POST /decide.
 const HTTP_PORT = 3000;
 
+// Exchange directo para decisiones inmediatas.
 const ACTIONS_DIRECT = "actions_direct";
 const RK_CRITICAL = "critical";
 const RK_MAINTENANCE = "maintenance";
 
+// Colas que consumen las acciones directas.
 const CRITICAL_QUEUE = "critical_actions_queue";
 const MAINTENANCE_QUEUE = "maintenance_queue";
 
+// Exchange diferido para acciones que esperan un retraso.
 const DELAYED_EXCHANGE = "delayed_exchange";
 const RK_MAINTENANCE_DELAYED = "maintenance_delayed";
 const RK_IGNORE_DELAYED = "ignore_delayed";
 
+// Tiempos de retraso por defecto para las acciones que no se ejecutan de inmediato.
 const DELAY_24H_MS = Number(process.env.DELAY_24H_MS) || 86400000;
 const DELAY_10MIN_MS = Number(process.env.DELAY_10MIN_MS) || 600000;
+// URL del sensor_producer para reflejar en la simulacion la decision elegida.
 const SENSOR_CONTROL_URL = process.env.SENSOR_CONTROL_URL || "http://localhost:3002";
 
+// Canal global reutilizado para publicar mensajes en RabbitMQ.
 let rabbitChannel = null;
 
+// Intenta conectarse varias veces hasta que RabbitMQ quede disponible.
 async function connectWithRetry(label, connectFn, delayMs = 4000) {
   let connected = false;
   while (!connected) {
@@ -52,6 +61,7 @@ async function connectWithRetry(label, connectFn, delayMs = 4000) {
   }
 }
 
+// Configura exchanges y colas en RabbitMQ para el enrutamiento de acciones.
 async function setupRabbitMQ() {
   const connection = await amqp.connect(RABBITMQ_URL);
   rabbitChannel = await connection.createChannel();
@@ -81,6 +91,7 @@ async function setupRabbitMQ() {
   console.log(`[action_dispatcher] ⏱️  Delays: 24h=${DELAY_24H_MS}ms | 10min=${DELAY_10MIN_MS}ms`);
 }
 
+// Lee el cuerpo JSON de la petición HTTP entrante.
 function parseBody(req) {
   return new Promise((resolve, reject) => {
     let data = "";
@@ -96,17 +107,20 @@ function parseBody(req) {
   });
 }
 
+// Establece encabezados CORS básicos para permitir llamadas desde el navegador.
 function setCors(res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 }
 
+// Envía el control de la acción al servicio de sensor para actualizar el comportamiento.
 async function applySensorControl(decision) {
   const body = {
     sensor_id: decision.sensor_id,
     chosen_action: decision.chosen_action,
   };
+
   if (decision.chosen_action === "IGNORAR_10_MINUTOS") body.duration_ms = DELAY_10MIN_MS;
   if (decision.chosen_action === "RECONOCER_Y_ESPERAR_24H") body.duration_ms = DELAY_24H_MS;
 
@@ -117,6 +131,7 @@ async function applySensorControl(decision) {
       body: JSON.stringify(body),
     });
     const data = await res.json();
+
     if (data.status !== "ACK") {
       console.warn("[action_dispatcher] ⚠️  Control sensor NACK:", data.error);
     } else {
@@ -125,6 +140,7 @@ async function applySensorControl(decision) {
           (data.duration_ms ? ` (${data.duration_ms}ms)` : "")
       );
     }
+
     return data;
   } catch (err) {
     console.error("[action_dispatcher] ❌ Control sensor falló:", err.message);
@@ -132,6 +148,7 @@ async function applySensorControl(decision) {
   }
 }
 
+// Enruta la decisión recibida a los exchanges y colas correctos de RabbitMQ.
 function routeDecision(decision) {
   const { chosen_action, sensor_id, alert_id, type } = decision;
   const payload = Buffer.from(
@@ -197,6 +214,7 @@ function routeDecision(decision) {
   }
 }
 
+// Servidor HTTP que atiende POST /decide, GET /health y permisos CORS.
 const server = http.createServer(async (req, res) => {
   setCors(res);
 
@@ -216,6 +234,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
+      // Primero se publica la decision en RabbitMQ; si fue valida, tambien se aplica al simulador.
       const result = routeDecision(body);
       if (result.status === "ACK") {
         const sensorResult = await applySensorControl(body);
@@ -243,6 +262,7 @@ const server = http.createServer(async (req, res) => {
   res.end(JSON.stringify({ error: "Not found" }));
 });
 
+// Inicio de la aplicación: conectamos RabbitMQ y arrancamos el servidor HTTP.
 (async () => {
   console.log("══════════════════════════════════════════════════════════════");
   console.log("  ACTION DISPATCHER — REST API :3000 + RabbitMQ Router       ");
