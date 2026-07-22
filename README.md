@@ -1,263 +1,169 @@
-# 🏭 Plataforma Híbrida de Mantenimiento Predictivo IoT (Kafka & RabbitMQ)
+# Plataforma de Mantenimiento Predictivo IoT
 
-Este proyecto implementa una solución de nivel industrial para el **Mantenimiento Predictivo IoT** utilizando una arquitectura híbrida de mensajería asíncrona distribuyendo el trabajo en dos autopistas clave:
-1. **Flujo de Ingesta Masiva y Tiempo Real (Apache Kafka):** Ingesta continua de sensores con afinidad por partición y procesamiento de ventanas móviles para detección de eventos.
-2. **Flujo Transaccional y Toma de Decisiones (RabbitMQ):** Distribución selectiva de alertas enriquecidas para operadores, comandos hacia actuadores y planificación en diferido (Delayed Message Exchange).
+## Descripción general
 
----
+Este proyecto implementa una solución distribuida para el monitoreo y mantenimiento predictivo de equipos industriales. Está diseñado para simular un entorno real de operación donde los sensores publican telemetría en tiempo real, se detectan anomalías en vibración y se generan alertas que pueden ser atendidas por un operador mediante una interfaz web interactiva.
 
-## 🏗️ Arquitectura General del Sistema
+La arquitectura combina microservicios, mensajería asíncrona y comunicación en tiempo real para demostrar un flujo completo de procesamiento de eventos: ingestión, detección, enrutamiento, decisión y control.
+
+## Problema que resuelve
+
+En ambientes industriales, detectar fallas potenciales antes de que se conviertan en averías costosas es clave para reducir tiempos de parada, optimizar mantenimiento y mejorar la seguridad operativa. Este proyecto modela ese flujo mediante un sistema que:
+
+- recopila datos de sensores en tiempo real,
+- detecta condiciones anormales,
+- genera alertas críticas o de advertencia,
+- permite que un operador tome decisiones,
+- y aplica acciones de control sobre la simulación del equipo.
+
+## Valor de negocio y técnico
+
+Este proyecto demuestra cómo construir una solución de software orientada a eventos con arquitectura distribuida, aplicando conceptos útiles para entornos reales de industria 4.0, automatización y monitoreo operativo.
+
+### Capacidades principales
+
+- Procesamiento distribuido de eventos
+- Comunicación entre servicios mediante Kafka y RabbitMQ
+- Visualización en tiempo real de estado de planta
+- Alertas operativas con decisiones humanas
+- Simulación de acciones de mantenimiento y apagado
+- Integración de frontend, backend y mensajería asíncrona
+
+## Arquitectura del sistema
+
+La solución está organizada en dos flujos principales:
+
+1. Flujo de ingestión y análisis en tiempo real con Kafka
+2. Flujo transaccional de decisiones y acciones con RabbitMQ
 
 ```mermaid
 graph TD
-    subgraph Capa de Ingesta y Análisis (Kafka KRaft)
-        SP[sensor_producer] -->|sensor_data / key: sensor_id| K_SD[(Tópico: sensor_data)]
-        K_SD --> AD[alert_detector]
-        AD -->|alerts_critical| K_AC[(Tópico: alerts_critical)]
-        AD -->|alerts_warning| K_AW[(Tópico: alerts_warning)]
-        
-        AD -->|sensor_status| K_SS[(Tópico: sensor_status)]
-        K_SS --> PM[plant_monitor_backend :8081]
-        K_AC --> PM
-        K_AW --> PM
-    end
-
-    subgraph Capa Transaccional y Humana (RabbitMQ)
-        K_AC --> AR[alert_router]
-        K_AW --> AR
-        AR -->|Interoperabilidad| RX_HA{Exchange Fanout: human_alerts}
-        
-        RX_HA --> OC[operator_console_backend :8082]
-        RX_HA --> NS[notification_service :3003]
-        
-        NS -->|Telegram / ntfy| PHONE[📱 Operador móvil]
-        NS -->|POST /decide| DISP[action_dispatcher :3001]
-        DASH[dashboard.html] -->|fetch POST /decide| DISP
-        PHONE -->|Web /m| NS
-        
-        DISP -->|actions_direct [critical]| AW[actuator_worker]
-        DISP -->|actions_direct [maintenance]| MW[maintenance_worker]
-        DISP -->|delayed_exchange 24h / 10min| MW
-    end
-
-    subgraph Interfaz de Usuario
-        PM -.->|WebSocket :8081| DASH
-        OC -.->|WebSocket :8082| DASH
-    end
+    SP[sensor_producer] -->|sensor_data| K[(Kafka)]
+    K --> AD[alert_detector]
+    AD -->|alerts| AR[alert_router]
+    AR -->|human_alerts| OC[operator_console_backend]
+    AR -->|human_alerts| NS[notification_service]
+    OC --> DASH[dashboard]
+    NS --> DISP[action_dispatcher]
+    DISP --> AW[actuator_worker]
+    DISP --> MW[maintenance_worker]
 ```
 
----
+## Tecnologías utilizadas
 
-## 📁 Estructura del Proyecto
+### Backend y servicios
+- Node.js
+- Kafka
+- RabbitMQ
+- WebSockets
+- Docker Compose
+- REST APIs
 
-El sistema está dividido en microservicios modulares e independientes utilizando Node.js:
+### Frontend
+- HTML
+- CSS
+- JavaScript
+- Tailwind CSS
+
+## Evidencia visual del proyecto
+
+A continuación se muestran capturas del dashboard y del estado del sistema para ilustrar el funcionamiento del proyecto de forma visual.
+
+### Dashboard con servicios apagados
+
+![Dashboard con servicios apagados](img/operaciones1.png)
+
+### Dashboard con servicios activos
+
+![Dashboard con servicios activos](img/operaciones2.png)
+
+## Estructura del proyecto
 
 ```text
 predictive-maintenance/
-├── docker-compose.yml          # Orquestación de infraestructura y microservicios
-├── README.md                   # Documentación técnica general
-├── rabbitmq/
-│   └── Dockerfile              # Dockerfile de RabbitMQ con instalación offline del plugin x-delay
-├── sensor_producer/
-│   ├── package.json
-│   ├── Dockerfile
-│   └── index.js                # Productor de simulación de 10 sensores (Kafka)
-├── alert_detector/
-│   ├── package.json
-│   ├── Dockerfile
-│   └── index.js                # Consumidor de Kafka con Ventana Móvil de 3 lecturas
-├── alert_router/
-│   ├── package.json
-│   ├── Dockerfile
-│   └── index.js                # Puente de Interoperabilidad Kafka -> RabbitMQ
-├── plant_monitor_backend/
-│   ├── package.json
-│   ├── Dockerfile
-│   └── index.js                # WebSocket Server (Telemetría en tiempo real)
-├── operator_console_backend/
-│   ├── package.json
-│   ├── Dockerfile
-│   └── index.js                # WebSocket Server (Despacho de decisiones a operador)
 ├── action_dispatcher/
-│   ├── package.json
-│   ├── Dockerfile
-│   └── index.js                # REST API y enrutador de decisiones
 ├── actuator_worker/
-│   ├── package.json
-│   ├── Dockerfile
-│   └── index.js                # Worker simulador de actuador industrial
+├── alert_detector/
+├── alert_router/
+├── dashboard/
 ├── maintenance_worker/
-│   ├── package.json
-│   ├── Dockerfile
-│   └── index.js                # Worker para tareas de mantenimiento inmediato/diferido
 ├── notification_service/
-│   ├── package.json
-│   ├── Dockerfile
-│   ├── .env.example            # Telegram / ntfy (copiar a .env)
-│   ├── index.js                # Push móvil + API decisiones
-│   └── public/mobile.html      # Panel táctil para celular
-└── dashboard/
-    └── dashboard.html          # Interfaz web de operaciones con Tailwind CSS
+├── operator_console_backend/
+├── plant_monitor_backend/
+├── rabbitmq/
+├── sensor_producer/
+├── docker-compose.yml
+└── README.md
 ```
 
----
+## Funcionalidades destacadas
 
-## 🔌 Asignación de Puertos y Servicios
+- Simulación de múltiples sensores industriales
+- Generación automática de alertas de advertencia y criticidad
+- Dashboard interactivo para monitorear el estado de la planta
+- Notificaciones para operadores y flujo de decisiones
+- Manejo de acciones diferidas mediante delayed messages
+- Control de estados como apagado, cooldown y mantenimiento
 
-| Puerto | Servicio | Protocolo / Uso |
-| :--- | :--- | :--- |
-| **9092** | `kafka` | Tráfico externo de Kafka |
-| **29092** | `kafka` | Tráfico interno de Docker Compose |
-| **5672** | `rabbitmq` | AMQP Mensajería |
-| **15672** | `rabbitmq` | Consola de Administración (Admin: `admin` / Pass: `admin123`) |
-| **8081** | `plant_monitor_backend` | WebSocket Server - Envío de Telemetría |
-| **8082** | `operator_console_backend`| WebSocket Server - Despacho de Decisiones al Operador |
-| **3001** | `action_dispatcher` | HTTP POST - Envío de Decisiones (Remapeado para evitar conflictos con Grafana local) |
-| **3002** | `sensor_producer` | HTTP POST /control - Impacto de decisiones en simulación |
-| **3003** | `notification_service` | Telegram / ntfy + panel móvil `/m` |
+## Cómo ejecutar el proyecto
 
----
+### Requisitos previos
 
-## 📱 Notificaciones al celular del operador
+- Docker Desktop instalado y en ejecución
+- Node.js instalado en tu máquina
 
-El microservicio `notification_service` consume el mismo Fanout `human_alerts` y envía alertas **críticas** al móvil con botones para decidir.
-
-### Opción A — Telegram (recomendada)
-
-1. En Telegram, abre [@BotFather](https://t.me/BotFather) → `/newbot` → copia el **token**.
-2. Envía `/start` a tu bot y obtén el **chat_id**:
-   ```bash
-   curl "https://api.telegram.org/bot<TU_TOKEN>/getUpdates"
-   ```
-   Busca `"chat":{"id":123456789}`.
-3. Copia la plantilla de variables:
-   ```bash
-   cp notification_service/.env.example notification_service/.env
-   ```
-4. Edita `notification_service/.env`:
-   ```env
-   TELEGRAM_BOT_TOKEN=123456:ABC...
-   TELEGRAM_CHAT_ID=123456789
-   ```
-5. En `docker-compose.yml`, en el servicio `notification_service`, referencia el archivo (o pega las variables en `environment`):
-   ```yaml
-   env_file:
-     - ./notification_service/.env
-   ```
-6. Reinicia: `docker compose up --build -d notification_service`
-
-Recibirás un mensaje con botones (**Apagar**, **Ignorar 10m**, etc.). Al pulsar, se ejecuta `POST /decide` y el sensor en la simulación cambia de estado.
-
-### Opción B — Panel web en el celular
-
-Abre en el navegador del teléfono (misma red Wi‑Fi):
-
-**http://localhost:3003/m**
-
-Lista alertas pendientes con botones grandes. También llega como enlace desde Telegram o ntfy.
-
-### Opción C — ntfy (push simple)
-
-1. Instala la app [ntfy](https://ntfy.sh) en el celular.
-2. Suscríbete a un topic (ej. `planta-iot-operador-david`).
-3. En `.env`: `NTFY_TOPIC=planta-iot-operador-david`
-4. La notificación abre el panel `/m` al tocar.
-
-### Verificar
+### Pasos
 
 ```bash
-docker logs -f notification_service
-curl http://localhost:3003/health
+cd predictive-maintenance
+docker compose up --build -d
 ```
 
-### Cola de notificaciones y error `getUpdates Conflict`
-
-Las alertas críticas se **encolan** antes de enviarse a Telegram (delay configurable, deduplicación por `alert_id`).
-
-El error `Conflict: terminated by other getUpdates request` **no es por cantidad de mensajes**, sino porque **dos clientes llaman `getUpdates` a la vez** con el mismo bot. Causas habituales:
-
-1. **Bug corregido:** antes se usaba `setInterval` cada 1 s mientras el long-poll dura ~25 s → varias peticiones solapadas.
-2. **Dos instancias** del servicio (p. ej. `docker compose` + `node index.js` local con el mismo token).
-3. **Webhook activo** además de polling (se llama `deleteWebhook` al arrancar).
-
-Solución: un solo contenedor `notification_service`, un solo token, reiniciar tras el cambio:
+### Verificar servicios
 
 ```bash
-docker compose up --build -d notification_service
+docker compose ps
 ```
 
-### Simulación: una crítica cada 8 horas
+### Ejecutar la interfaz web
 
-En `sensor_producer`, la telemetría ya no es aleatoria pura: como máximo **una lectura >90 mm/s cada 8 h** en toda la planta (`CRITICAL_INTERVAL_MS=28800000`). Para pruebas rápidas:
-
-```yaml
-CRITICAL_INTERVAL_MS: "120000"   # 2 minutos en sensor_producer
-```
-
----
-
-## 🚀 Despliegue del Sistema
-
-### Requisitos Previos
-* **Docker Desktop** instalado y en ejecución.
-
-### Instrucciones de Ejecución
-
-1. **Iniciar el clúster de microservicios**:
-   ```bash
-   cd predictive-maintenance
-   docker compose up --build -d
-   ```
-
-2. **Verificar el estado de los contenedores**:
-   ```bash
-   docker compose ps
-   ```
-   Deberías ver los 11 contenedores en estado `Up` y `healthy`.
-
-3. **Ejecutar la Interfaz Web**:
-   Abre el archivo `dashboard/dashboard.html` directamente en tu navegador preferido. Puedes abrirlo con doble clic en tu explorador de archivos o con el siguiente comando en Windows PowerShell/Command Prompt:
-   ```bash
-   start dashboard/dashboard.html
-   ```
-
-> [!NOTE]
-> **¿Mensaje "Upgrade Required" en el navegador?**
-> Si intentas acceder directamente a `http://localhost:8081` o `http://localhost:8082` usando la barra de direcciones del navegador, verás un error `Upgrade Required`. Esto es **completamente normal**. Esos puertos exponen servidores **WebSocket puros** y requieren una cabecera de conexión especial iniciada desde JavaScript. Abre siempre el archivo `dashboard.html` para interactuar con la plataforma de forma visual.
-
----
-
-## 🕵️ Comandos de Inspección y Monitoreo (CLI)
-
-Para validar que la arquitectura de mensajería híbrida funciona correctamente, ejecuta los siguientes comandos en tu consola:
-
-### 1. Ingesta de Telemetría (Kafka)
-Inspecciona si el simulador está transmitiendo lecturas al tópico de Kafka:
 ```bash
-docker logs -f sensor_producer
+start dashboard/dashboard.html
 ```
 
-### 2. Detección de Alertas en Ventana Móvil
-Verifica cómo el consumidor detecta las anomalías basadas en estado en tiempo real (Lecturas > 90 o 3 consecutivas > 75):
-```bash
-docker logs -f alert_detector
-```
+## Servicios principales
 
-### 3. Enrutamiento e Interoperabilidad Kafka -> RabbitMQ
-Verifica el procesamiento del puente de mensajería enriqueciendo los payloads con opciones antes de inyectarlos a RabbitMQ:
-```bash
-docker logs -f alert_router
-```
+| Servicio | Función |
+| --- | --- |
+| sensor_producer | Genera telemetría de sensores y publica eventos |
+| alert_detector | Detecta anomalías y emite alertas |
+| alert_router | Enruta alertas desde Kafka hacia RabbitMQ |
+| plant_monitor_backend | Expone telemetría en tiempo real vía WebSocket |
+| operator_console_backend | Entrega alertas al operador en tiempo real |
+| action_dispatcher | Recibe decisiones del operador y las enruta a acciones |
+| notification_service | Envía alertas a canales de notificación y al panel móvil |
+| dashboard | Interfaz visual para monitoreo y control |
 
-### 4. Ejecución Inmediata de Apagado Industrial (Actuador)
-Toma la decisión de **"APAGADO INMEDIATO"** en una alerta crítica desde el dashboard y verifica el log en el worker del actuador:
-```bash
-docker logs -f actuator_worker
-```
+## Habilidades demostradas
 
-### 5. Ejecución Diferida mediante RabbitMQ (Mantenimiento)
-Toma la decisión de **"RECONOCER Y ESPERAR 24H"** (retraso real de 24 h, `86400000` ms) o **"IGNORAR 10 MINUTOS"** (retraso de 10 min, `600000` ms) y verifica en el worker de mantenimiento cuando el mensaje se libera del Delayed Exchange:
-```bash
+Este proyecto permite evidenciar competencias en:
+
+- desarrollo de aplicaciones distribuidas,
+- arquitectura orientada a eventos,
+- integración con sistemas de mensajería,
+- implementación de comunicación en tiempo real,
+- diseño de APIs y microservicios,
+- trabajo con contenedores y orquestación local,
+- y construcción de interfaces interactivas para monitoreo operativo.
+
+## Nota para recruiters
+
+Este proyecto fue desarrollado con un enfoque de ingeniería de software aplicada a escenarios industriales. No solo demuestra conocimiento técnico, sino también capacidad para pensar en sistemas escalables, resilientes y conectados a flujos reales de negocio.
+
+## Autor
+
+Diery Valencia
+
 docker logs -f maintenance_worker
 ```
 
