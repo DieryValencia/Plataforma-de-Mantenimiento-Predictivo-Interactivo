@@ -67,7 +67,7 @@ graph TD
 
 ## Evidencia visual del proyecto
 
-A continuación se muestran capturas del dashboard y del estado del sistema para ilustrar el funcionamiento del proyecto de forma visual y más atractiva para reclutadores.
+A continuación se muestran capturas del dashboard y del estado del sistema para ilustrar el funcionamiento del proyecto de forma visual.
 
 ### Dashboard con servicios apagados
 
